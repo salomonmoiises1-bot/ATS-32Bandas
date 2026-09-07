@@ -5,26 +5,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unzip
+      - name: Prepare
         run: |
-          unzip -o "*.zip" || true
+          unzip -o "*.zip" 2>/dev/null || true
           rm -f *.zip || true
-          if [ -d "ats-audioplayer-and-mdrc-audio-effects" ]; then
-            mv ats-audioplayer-and-mdrc-audio-effects/*. || true
-            mv ats-audioplayer-and-mdrc-audio-effects/.*. || true
-            rm -rf ats-audioplayer-and-mdrc-audio-effects
-          fi
+          rm -rf ats-audioplayer-and-mdrc-audio-effects
           ls -la
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
       - uses: android-actions/setup-android@v3
-      - name: Build
+      - name: Build APK
         run: |
           chmod +x gradlew
          ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: ATS-32Bandas-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/*.apk
