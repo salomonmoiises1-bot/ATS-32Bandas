@@ -12,12 +12,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
+
       - name: Descomprimir
         run: |
           for z in *.zip *.ZIP; do [ -f "$z" ] && unzip -o "$z"; done
           ls -la
-          ls -la app || true
-      - name: Arreglar Gradle
+
+      - name: Arreglar Gradle raiz
         run: |
           echo "include ':app'" > settings.gradle
           cat > build.gradle <<'EOF'
@@ -37,7 +38,25 @@ jobs:
               }
           }
           EOF
+
+      - name: Fix ListenableFuture 1.0
+        run: |
+          cat >> app/build.gradle <<'EOF'
+
+          // FIX para el error ListenableFuture:1.0
+          configurations.all {
+              resolutionStrategy {
+                  force 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'
+              }
+          }
+          dependencies {
+              implementation 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'
+          }
+          EOF
+          tail -n 20 app/build.gradle
+
       - run: gradle assembleDebug
+
       - uses: actions/upload-artifact@v4
         with:
           name: APK
