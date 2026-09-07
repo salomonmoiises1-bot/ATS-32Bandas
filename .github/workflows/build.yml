@@ -1,0 +1,29 @@
+name: Build APK
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descomprimir ZIP
+        run: |
+          sudo apt-get install -y unzip
+          ZIP=$(ls *.zip | head -n 1)
+          unzip -o "$ZIP"
+          DIR=$(ls -d ats-audioplayer* | head -n 1)
+          if [ -d "$DIR" ]; then
+            shopt -s dotglob
+            mv $DIR/* .
+          fi
+          rm -rf $DIR *.zip
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - name: Compilar
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ATS-32Bandas-APK
+          path: app/build/outputs/apk/debug/*.apk
