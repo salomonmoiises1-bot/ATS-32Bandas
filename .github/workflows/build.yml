@@ -13,20 +13,30 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Descomprimir proyecto
+      - name: Descomprimir y arreglar repos
         run: |
           ls -la
-          unzip -o "*.zip" || unzip -o ats-*.zip || true
-          # si el zip crea una carpeta, sacamos todo a la raíz
-          for d in */; do
-            if [ -f "$d/settings.gradle" ] || [ -f "$d/app/build.gradle" ]; then
-              echo "Moviendo desde $d"
-              mv "$d"/*. 2>/dev/null || true
-              mv "$d"/.*. 2>/dev/null || true
-            fi
-          done
-          ls -la
-          ls -la app || true
+          unzip -o "*.zip" 2>/dev/null || unzip -o ats-*.zip 2>/dev/null || true
+          rm -f settings.gradle build.gradle
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          include ':app'
+          EOF
+          cat settings.gradle
+          ls -la app
 
       - run: gradle assembleDebug
 
