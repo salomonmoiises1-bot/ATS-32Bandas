@@ -12,7 +12,24 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
+
+      - name: Descomprimir proyecto
+        run: |
+          ls -la
+          unzip -o "*.zip" || unzip -o ats-*.zip || true
+          # si el zip crea una carpeta, sacamos todo a la raíz
+          for d in */; do
+            if [ -f "$d/settings.gradle" ] || [ -f "$d/app/build.gradle" ]; then
+              echo "Moviendo desde $d"
+              mv "$d"/*. 2>/dev/null || true
+              mv "$d"/.*. 2>/dev/null || true
+            fi
+          done
+          ls -la
+          ls -la app || true
+
       - run: gradle assembleDebug
+
       - uses: actions/upload-artifact@v4
         with:
           name: APK
