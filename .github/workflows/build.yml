@@ -17,6 +17,18 @@ jobs:
         run: |
           for z in *.zip *.ZIP; do [ -f "$z" ] && unzip -o "$z"; done
           ls -la
+          # Si el proyecto quedó en subcarpeta ATS-32Bandas/ATS-32Bandas, lo sacamos a la raiz
+          if [! -f app/build.gradle ]; then
+            echo "Buscando app/build.gradle en subcarpetas..."
+            FOUND=$(find. -name "build.gradle" -path "*/app/build.gradle" | head -n 1)
+            echo "Encontrado: $FOUND"
+            DIR=$(dirname $(dirname "$FOUND"))
+            echo "Moviendo desde $DIR a./"
+            cp -r "$DIR"/*./
+            cp -r "$DIR"/.*./ 2>/dev/null || true
+          fi
+          ls -la
+          ls -la app
 
       - name: Arreglar Gradle raiz
         run: |
@@ -42,29 +54,24 @@ jobs:
           }
           EOF
 
-      - name: BORRAR ListenableFuture roto y parchar
+      - name: Fix ListenableFuture
         run: |
-          echo "=== Antes ==="
-          grep -n "ListenableFuture" app/build.gradle || echo "no grep"
-          # Borra la linea que causa el error
           sed -i '/ListenableFuture/d' app/build.gradle
           sed -i '/com.google.common.util.concurrent/d' app/build.gradle
-          echo "=== Despues ==="
-          grep -n "ListenableFuture" app/build.gradle || echo "borrado OK"
-          # Agrega el reemplazo oficial de Google
           cat >> app/build.gradle <<'EOF'
 
           configurations.all {
               resolutionStrategy {
                   dependencySubstitution {
-                      substitute module('com.google.common.util.concurrent:ListenableFuture') with module('com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava')
+                      substitute module('com.google.common.util.concurrent:ListenableFuture') using module('com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava')
                   }
-                  force 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'
               }
           }
+          dependencies {
+              implementation 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'
+          }
           EOF
-          echo "implementation 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'" >> app/build.gradle
-          tail -n 30 app/build.gradle
+          tail -n 40 app/build.gradle
 
       - run: gradle assembleDebug
 
