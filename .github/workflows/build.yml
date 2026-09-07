@@ -12,19 +12,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
-
       - name: Descomprimir
         run: |
-          for z in *.zip *.ZIP ats-*.zip; do [ -f "$z" ] && unzip -o "$z"; done
-          for d in */; do [ -f "$d/app/build.gradle" ] && cp -r "$d"/*. 2>/dev/null; cp -r "$d"/. 2>/dev/null || true; done
+          for z in *.zip *.ZIP; do [ -f "$z" ] && unzip -o "$z"; done
           ls -la
-          ls -la app
-
-      - name: Arreglar Gradle raiz
+          ls -la app || true
+      - name: Arreglar Gradle
         run: |
-          # settings.gradle SIMPLE para proyectos viejos
           echo "include ':app'" > settings.gradle
-          # build.gradle raiz con google() + classpath
           cat > build.gradle <<'EOF'
           buildscript {
               repositories {
@@ -33,7 +28,6 @@ jobs:
               }
               dependencies {
                   classpath 'com.android.tools.build:gradle:8.1.4'
-                  classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.10'
               }
           }
           allprojects {
@@ -43,22 +37,7 @@ jobs:
               }
           }
           EOF
-          cat settings.gradle
-          cat build.gradle
-          echo "--- app/build.gradle primeros 30 ---"
-          head -n 50 app/build.gradle
-
       - run: gradle assembleDebug
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: APK
-          path: app/build/outputs/apk/debug/*.apk          EOF
-          cat settings.gradle
-          ls -la app
-
-      - run: gradle assembleDebug
-
       - uses: actions/upload-artifact@v4
         with:
           name: APK
