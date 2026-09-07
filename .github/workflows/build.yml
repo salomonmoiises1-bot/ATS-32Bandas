@@ -13,22 +13,30 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Descomprimir y arreglar carpeta doble
+      - name: Descomprimir y limpiar triple carpeta
         run: |
           for z in *.zip *.ZIP; do [ -f "$z" ] && unzip -o "$z"; done
-          echo "Buscando proyecto real..."
-          REAL_APP=$(find. -type f -path "*/app/src/main/AndroidManifest.xml" | head -n 1)
-          echo "REAL_APP=$REAL_APP"
-          REAL_ROOT=$(dirname $(dirname $(dirname $(dirname "$REAL_APP"))))
-          echo "REAL_ROOT=$REAL_ROOT"
-          if [ "$REAL_ROOT"!= "." ]; then
-            echo "Moviendo de $REAL_ROOT a la raiz"
-            cp -r $REAL_ROOT/*.
-            cp -r $REAL_ROOT/.*. 2>/dev/null || true
-          fi
+          echo "=== ANTES ==="
+          find. -type f -path "*/app/build.gradle" | head -n 10
+          # Busca el app REAL que tiene res/mipmap
+          REAL_MANIFEST=$(find. -type f -path "*/app/src/main/AndroidManifest.xml" | head -n 1)
+          echo "MANIFEST: $REAL_MANIFEST"
+          REAL_APP_DIR=$(dirname $(dirname $(dirname "$REAL_MANIFEST")))
+          echo "REAL_APP_DIR: $REAL_APP_DIR"
+          # Lo guardamos en /tmp
+          rm -rf /tmp/app_real
+          mkdir -p /tmp/app_real
+          cp -r "$REAL_APP_DIR"/* /tmp/app_real/
+          # Borramos TODAS las carpetas anidadas ATS-32Bandas para que no confunda
+          rm -rf./ATS-32Bandas./app
+          mkdir -p app
+          cp -r /tmp/app_real/*./app/
+          # Si habia archivos de raiz (build.gradle, settings) en la carpeta original del zip, tambien los traemos
+          REAL_ROOT=$(dirname "$REAL_APP_DIR")
+          if [ -f "$REAL_ROOT/build.gradle" ]; then cp "$REAL_ROOT/build.gradle"./build.gradle.orig || true; fi
+          echo "=== DESPUES ==="
           ls -la
-          ls -la app/src/main/res/mipmap || echo "no mipmap"
-          ls -la app/src/main/res/xml || echo "no xml"
+          ls -la app/src/main/res/mipmap | head
 
       - name: Arreglar Gradle raiz
         run: |
@@ -54,30 +62,29 @@ jobs:
           }
           EOF
 
-      - name: Fix recursos faltantes + ListenableFuture
+      - name: Fix recursos + ListenableFuture
         run: |
-          # Borra dependencia rota
+          # 1. Borra la linea rota
           sed -i '/ListenableFuture/d' app/build.gradle
           sed -i '/com.google.common.util.concurrent/d' app/build.gradle
 
-          # Crea iconos si no existen
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p app/src/main/res/xml
+          # 2. Crea recursos que te faltan
+          mkdir -p app/src/main/res/mipmap-hdpi app/src/main/res/xml
           if [! -f app/src/main/res/mipmap/ic_launcher.png ]; then
-            echo "Creando ic_launcher dummy"
-            # png de 1x1 transparente
             echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAwMB/6XW2LEAAAAASUVORK5CYII=" | base64 -d > app/src/main/res/mipmap/ic_launcher.png
             cp app/src/main/res/mipmap/ic_launcher.png app/src/main/res/mipmap/ic_launcher_round.png
           fi
-          # Crea los xml que te faltan si no existen
           if [! -f app/src/main/res/xml/data_extraction_rules.xml ]; then
-            echo '<?xml version="1.0" encoding="utf-8"?><data-extraction-rules><cloud-backup><include domain="sharedpref" /><include domain="database" /></cloud-backup><device-transfer><include domain="sharedpref" /><include domain="database" /></device-transfer></data-extraction-rules>' > app/src/main/res/xml/data_extraction_rules.xml
+            echo '<?xml version="1.0" encoding="utf-8"?><data-extraction-rules><cloud-backup><include domain="sharedpref"/><include domain="database"/></cloud-backup><device-transfer><include domain="sharedpref"/><include domain="database"/></device-transfer></data-extraction-rules>' > app/src/main/res/xml/data_extraction_rules.xml
           fi
           if [! -f app/src/main/res/xml/backup_rules.xml ]; then
-            echo '<?xml version="1.0" encoding="utf-8"?><full-backup-content><include domain="sharedpref" /><include domain="database" /></full-backup-content>' > app/src/main/res/xml/backup_rules.xml
+            echo '<?xml version="1.0" encoding="utf-8"?><full-backup-content><include domain="sharedpref"/><include domain="database"/></full-backup-content>' > app/src/main/res/xml/backup_rules.xml
           fi
 
-          # Parche ListenableFuture
+          # 3. PARCHE CORRECTO - dentro de dependencies
+          # Inserta la linea dentro del bloque dependencies { }
+          sed -i "/dependencies {/a \ implementation 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'" app/build.gradle
+
           cat >> app/build.gradle <<'EOF'
 
           configurations.all {
@@ -85,13 +92,13 @@ jobs:
                   dependencySubstitution {
                       substitute module('com.google.common.util.concurrent:ListenableFuture') using module('com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava')
                   }
-                  force 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'
               }
           }
           EOF
-          echo "implementation 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'" >> app/build.gradle
+          echo "--- app/build.gradle final ---"
+          tail -n 50 app/build.gradle
 
-      - run: gradle assembleDebug
+      - run: gradle assembleDebug --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
