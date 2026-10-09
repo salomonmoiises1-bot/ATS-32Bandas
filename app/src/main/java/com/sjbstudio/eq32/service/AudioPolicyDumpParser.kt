@@ -20,15 +20,18 @@ internal object AudioPolicyDumpParser {
     private val sessionPattern = Pattern.compile("(?i)session\\s?id:\\s*(\\d+)")
     @Volatile private var cachedBinder: IBinder? = null
 
-    fun dump(context: Context, timeoutMs: Long = 1200L): Map<String, Set<Int>> = try {
+    fun dump(context: Context, timeoutMs: Long = 1200L): Map<String, Set<Int>>? = try {
         dumpInternal(context, timeoutMs)
     } catch (t: Throwable) {
-        Log.w(TAG, "Could not recover audio session IDs; public playback detection remains available", t)
-        emptyMap()
+        // null means the dump failed; an empty map means a successful dump had no recognized
+        // target sessions. Keeping those states distinct prevents transient Binder/API failures
+        // from detaching a DSP session while the user's music is still playing.
+        Log.w(TAG, "Could not recover audio session IDs; retaining previously detected sessions", t)
+        null
     }
 
-    private fun dumpInternal(context: Context, timeoutMs: Long): Map<String, Set<Int>> {
-        val binder = obtainAudioBinder() ?: return emptyMap()
+    private fun dumpInternal(context: Context, timeoutMs: Long): Map<String, Set<Int>>? {
+        val binder = obtainAudioBinder() ?: return null
         val pipe = ParcelFileDescriptor.createPipe()
         val readFd = pipe[0]
         val writeFd = pipe[1]

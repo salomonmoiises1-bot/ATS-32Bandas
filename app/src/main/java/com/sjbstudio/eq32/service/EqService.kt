@@ -125,8 +125,10 @@ class EqService : Service() {
             }
             ACTION_DETACH_SESSION, ACTION_DETECTED_DETACH_SESSION -> {
                 val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION, 0)
-                if (intent.action == ACTION_DETECTED_DETACH_SESSION) detectedSessions.remove(sessionId)
-                else announcedSessions.remove(sessionId)
+                if (sessionId > 0) {
+                    if (intent.action == ACTION_DETECTED_DETACH_SESSION) detectedSessions.remove(sessionId)
+                    else announcedSessions.remove(sessionId)
+                }
                 refreshActiveSession()
             }
             ACTION_REFRESH_ACTIVE_SESSION -> {

@@ -84,11 +84,18 @@ class PlaybackListenerService : NotificationListenerService() {
     private fun scanAndDispatch() {
         val targetPackages = setOf("com.google.android.youtube", "com.spotify.music", "com.aimp.player")
         val found = mutableMapOf<Int, String>()
-        try {
-            AudioPolicyDumpParser.dump(applicationContext).forEach { (pkg, ids) ->
-                if (pkg in targetPackages) ids.filter { it > 0 }.forEach { id -> found[id] = pkg }
-            }
-        } catch (t: Throwable) { Log.w(TAG, "Session scan failed", t) }
+        val recoveredSessions = try {
+            AudioPolicyDumpParser.dump(applicationContext)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Session scan failed; retaining prior sessions", t)
+            null
+        }
+        // A failed/denied dump is not the same as a successful dump with no sessions. Do not
+        // tear down a working effect merely because audioserver temporarily refused the query.
+        if (recoveredSessions == null) return
+        recoveredSessions.forEach { (pkg, ids) ->
+            if (pkg in targetPackages) ids.filter { it > 0 }.forEach { id -> found[id] = pkg }
+        }
 
         // Public APIs can show the active app but do not expose its usable session ID on many builds.
         // Deliberately do not manufacture an ID or attach the global session 0 in that case.
