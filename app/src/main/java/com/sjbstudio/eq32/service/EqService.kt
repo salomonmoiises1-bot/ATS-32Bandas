@@ -1,13 +1,9 @@
 package com.sjbstudio.eq32.service
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
+import android.app.*
 import android.content.Context
 import android.content.Intent
-import android.os.Binder
+import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -31,6 +27,7 @@ class EqService : Service() {
         const val ACTION_UPDATE_STATE = "com.sjbstudio.eq32.ACTION_UPDATE_STATE"
         const val ACTION_ATTACH_SESSION = "com.sjbstudio.eq32.ACTION_ATTACH_SESSION"
         const val ACTION_DETACH_SESSION = "com.sjbstudio.eq32.ACTION_DETACH_SESSION"
+        const val ACTION_REFRESH_ACTIVE_SESSION = "com.sjbstudio.eq32.ACTION_REFRESH_ACTIVE_SESSION"
         const val EXTRA_AUDIO_SESSION = "EXTRA_AUDIO_SESSION"
 
         fun startService(context: Context) {
@@ -49,6 +46,7 @@ class EqService : Service() {
     private val dynamicsManagers = mutableMapOf<Int, DynamicsProcessingManager>()
     private lateinit var prefsManager: EqPreferencesManager
     private var currentState = EqState32WithMDRC()
+    private var currentActiveSession: Int = 0
 
     inner class LocalBinder : Binder() {
         fun getService(): EqService = this@EqService
@@ -56,18 +54,14 @@ class EqService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "SJBStudio DSP Service onCreate")
         prefsManager = EqPreferencesManager(this)
         currentState = prefsManager.loadCurrentState()
         createNotificationChannel()
-
-        // Session 0 is only a fallback until Android reports real playback sessions.
-        attachSession(0)
+        refreshActiveSession()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildForegroundNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        startForeground(NOTIFICATION_ID, buildForegroundNotification())
 
         when (intent?.action) {
             ACTION_TOGGLE -> {
@@ -81,16 +75,14 @@ class EqService : Service() {
             }
             ACTION_ATTACH_SESSION -> {
                 val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION, 0)
-                if (sessionId != 0) {
-                    // Avoid processing the same output through both global and app session effects.
-                    dynamicsManagers.remove(0)?.release()
-                    attachSession(sessionId)
-                }
+                attachSessionSafely(sessionId)
             }
             ACTION_DETACH_SESSION -> {
                 val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION, 0)
-                dynamicsManagers.remove(sessionId)?.release()
-                if (dynamicsManagers.keys.none { it != 0 }) attachSession(0)
+                detachSession(sessionId)
+            }
+            ACTION_REFRESH_ACTIVE_SESSION -> {
+                refreshActiveSession()
             }
             ACTION_STOP -> {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -142,7 +134,11 @@ class EqService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val statusText = if (currentState.isEnabled) "DSP ACTIVE · EQ32 + Tone + MDRC" else "DSP BYPASSED"
+        val statusText = if (currentState.isEnabled) {
+            "DSP ACTIVE · EQ32 + Tone + MDRC"
+        } else {
+            "DSP BYPASSED"
+        }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SJBStudio EQ32")
@@ -165,18 +161,93 @@ class EqService : Service() {
     }
 
     @Synchronized
+    private fun refreshActiveSession() {
+        val audioManager = getSystemService(AudioManager::class.java)
+
+        val preferredSession = try {
+            val configs = audioManager?.activePlaybackConfigurations
+            configs
+                ?.filter { it.isActive }
+                ?.mapNotNull { it.audioSessionId }
+                ?.firstOrNull { it != 0 }
+                ?: 0
+        } catch (_: Throwable) {
+            0
+        }
+
+        if (preferredSession != currentActiveSession) {
+            val oldSession = currentActiveSession
+            if (oldSession != 0) {
+                detachSession(oldSession)
+            }
+            currentActiveSession = preferredSession
+            attachSessionSafely(preferredSession)
+        } else {
+            attachSessionSafely(preferredSession)
+        }
+    }
+
+    @Synchronized
+    private fun attachSessionSafely(sessionId: Int) {
+        if (sessionId == 0) {
+            // fallback only
+            if (dynamicsManagers.containsKey(0)) {
+                dynamicsManagers[0]?.applyState(currentState)
+                return
+            }
+            attachSession(0)
+            return
+        }
+
+        // remove global fallback when we have a real session
+        if (dynamicsManagers.containsKey(0)) {
+            dynamicsManagers.remove(0)?.release()
+        }
+
+        val existing = dynamicsManagers[sessionId]
+        if (existing != null) {
+            existing.applyState(currentState)
+            currentActiveSession = sessionId
+            return
+        }
+
+        val manager = DynamicsProcessingManager()
+        if (manager.attachToSession(sessionId, currentState)) {
+            dynamicsManagers[sessionId] = manager
+            currentActiveSession = sessionId
+            Log.d(TAG, "Attached DSP to active playback session=$sessionId")
+        } else {
+            manager.release()
+            Log.w(TAG, "Unable to attach DSP to session=$sessionId; fallback to session 0")
+            attachSession(0)
+        }
+    }
+
+    @Synchronized
     private fun attachSession(sessionId: Int) {
         val existing = dynamicsManagers[sessionId]
         if (existing != null) {
             existing.applyState(currentState)
+            currentActiveSession = sessionId
             return
         }
+
         val manager = DynamicsProcessingManager()
         if (manager.attachToSession(sessionId, currentState)) {
             dynamicsManagers[sessionId] = manager
+            currentActiveSession = sessionId
         } else {
             manager.release()
             Log.w(TAG, "Unable to attach DSP to audio session $sessionId")
+        }
+    }
+
+    @Synchronized
+    private fun detachSession(sessionId: Int) {
+        val manager = dynamicsManagers.remove(sessionId)
+        manager?.release()
+        if (dynamicsManagers.keys.none { it != 0 }) {
+            attachSession(0)
         }
     }
 
