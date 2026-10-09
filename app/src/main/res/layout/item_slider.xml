@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="48dp"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:paddingVertical="4dp">
+
+    <!-- dB readout (double tap to reset) -->
+    <TextView
+        android:id="@+id/tvGainVal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0.0"
+        android:textColor="@color/neon_cyan"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:background="?selectableItemBackgroundBorderless"
+        android:padding="2dp" />
+
+    <!-- Vertical Slider (-12 to +12) -->
+    <com.google.android.material.slider.Slider
+        android:id="@+id/sliderVertical"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:rotation="270"
+        android:valueFrom="-12.0"
+        android:valueTo="12.0"
+        android:stepSize="0.1"
+        android:value="0.0"
+        app:thumbColor="@color/neon_cyan"
+        app:trackColorActive="@color/neon_cyan"
+        app:trackColorInactive="@color/slider_track_inactive"
+        app:haloColor="@color/halo_cyan" />
+
+    <!-- Frequency indicator -->
+    <TextView
+        android:id="@+id/tvFreqLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="1k"
+        android:textColor="@color/text_primary"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+</LinearLayout>

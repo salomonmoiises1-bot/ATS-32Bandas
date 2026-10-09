@@ -1,1 +1,283 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
 
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MDRC DYNAMICS COMPRESSOR"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="4-Band Post-EQ / Pre-Limiter MBC"
+                android:textColor="@color/text_secondary"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switchMdrcMaster"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            app:thumbTint="@color/neon_violet"
+            app:trackTint="@color/surface_card" />
+    </RelativeLayout>
+
+    <!-- 4 Band Selection Tabs -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:weightSum="4"
+        android:layout_marginBottom="12dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnBand0"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="SUB (&lt;120)"
+            android:textSize="9sp"
+            android:textColor="@color/text_primary"
+            android:backgroundTint="@color/surface_dark"
+            android:layout_marginEnd="2dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnBand1"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="LOW-MID"
+            android:textSize="9sp"
+            android:textColor="@color/text_primary"
+            android:backgroundTint="@color/surface_dark"
+            android:layout_marginHorizontal="2dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnBand2"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="HIGH-MID"
+            android:textSize="9sp"
+            android:textColor="@color/text_primary"
+            android:backgroundTint="@color/surface_dark"
+            android:layout_marginHorizontal="2dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnBand3"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="AIR (&gt;6k)"
+            android:textSize="9sp"
+            android:textColor="@color/text_primary"
+            android:backgroundTint="@color/surface_dark"
+            android:layout_marginStart="2dp" />
+    </LinearLayout>
+
+    <!-- Threshold -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="80dp"
+            android:layout_height="wrap_content"
+            android:text="THRESHOLD"
+            android:textColor="@color/text_secondary"
+            android:textSize="10sp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderThreshold"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:valueFrom="-40.0"
+            android:valueTo="0.0"
+            android:stepSize="0.5"
+            android:value="-20.0"
+            app:thumbColor="@color/neon_violet"
+            app:trackColorActive="@color/neon_violet" />
+
+        <TextView
+            android:id="@+id/tvThresholdVal"
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="-20.0 dB"
+            android:textColor="@color/text_primary"
+            android:textSize="10sp"
+            android:gravity="end" />
+    </LinearLayout>
+
+    <!-- Ratio -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="80dp"
+            android:layout_height="wrap_content"
+            android:text="RATIO"
+            android:textColor="@color/text_secondary"
+            android:textSize="10sp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderRatio"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:valueFrom="1.0"
+            android:valueTo="20.0"
+            android:stepSize="0.5"
+            android:value="2.0"
+            app:thumbColor="@color/neon_violet"
+            app:trackColorActive="@color/neon_violet" />
+
+        <TextView
+            android:id="@+id/tvRatioVal"
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="2.0:1"
+            android:textColor="@color/text_primary"
+            android:textSize="10sp"
+            android:gravity="end" />
+    </LinearLayout>
+
+    <!-- Attack -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="80dp"
+            android:layout_height="wrap_content"
+            android:text="ATTACK"
+            android:textColor="@color/text_secondary"
+            android:textSize="10sp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderAttack"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:valueFrom="1.0"
+            android:valueTo="100.0"
+            android:stepSize="1.0"
+            android:value="20.0"
+            app:thumbColor="@color/neon_violet"
+            app:trackColorActive="@color/neon_violet" />
+
+        <TextView
+            android:id="@+id/tvAttackVal"
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="20 ms"
+            android:textColor="@color/text_primary"
+            android:textSize="10sp"
+            android:gravity="end" />
+    </LinearLayout>
+
+    <!-- Release -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="80dp"
+            android:layout_height="wrap_content"
+            android:text="RELEASE"
+            android:textColor="@color/text_secondary"
+            android:textSize="10sp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderRelease"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:valueFrom="10.0"
+            android:valueTo="500.0"
+            android:stepSize="5.0"
+            android:value="200.0"
+            app:thumbColor="@color/neon_violet"
+            app:trackColorActive="@color/neon_violet" />
+
+        <TextView
+            android:id="@+id/tvReleaseVal"
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="200 ms"
+            android:textColor="@color/text_primary"
+            android:textSize="10sp"
+            android:gravity="end" />
+    </LinearLayout>
+
+    <!-- Makeup Gain -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="80dp"
+            android:layout_height="wrap_content"
+            android:text="MAKEUP"
+            android:textColor="@color/text_secondary"
+            android:textSize="10sp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderMakeup"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:valueFrom="0.0"
+            android:valueTo="18.0"
+            android:stepSize="0.5"
+            android:value="0.0"
+            app:thumbColor="@color/neon_violet"
+            app:trackColorActive="@color/neon_violet" />
+
+        <TextView
+            android:id="@+id/tvMakeupVal"
+            android:layout_width="56dp"
+            android:layout_height="wrap_content"
+            android:text="+0.0 dB"
+            android:textColor="@color/text_primary"
+            android:textSize="10sp"
+            android:gravity="end" />
+    </LinearLayout>
+</LinearLayout>
