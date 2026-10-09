@@ -74,13 +74,25 @@ class DynamicsProcessingManager {
         val bandCount = EqState32WithMDRC.FREQS.size
         require(bandCount == REQUESTED_EQ_BANDS) { "EQ32 requires exactly 32 bands" }
         val preEq = Eq(true, true, bandCount)
+        val outputRate = currentSampleRate().toDouble()
+        val usableMaxHz = minOf(20000.0, outputRate * 0.45).coerceAtLeast(20.0)
+        val sourceLogSpan = kotlin.math.ln(20000.0 / 20.0)
         EqState32WithMDRC.FREQS.forEachIndexed { index, frequency ->
-            preEq.setBand(index, EqBand(state.isEnabled, frequency.toFloat(), 0f))
+            val sourceFrequency = frequency.coerceIn(20.0, 20000.0)
+            val fraction = (kotlin.math.ln(sourceFrequency / 20.0) / sourceLogSpan).coerceIn(0.0, 1.0)
+            val safeFrequency = (20.0 * kotlin.math.exp(fraction * kotlin.math.ln(usableMaxHz / 20.0))).toFloat()
+            preEq.setBand(index, EqBand(state.isEnabled, safeFrequency, 0f))
         }
 
         val mbc = Mbc(state.mdrcEnabled, true, MDRC_BANDS)
         if (state.mdrcEnabled) {
-            val cutoffs = floatArrayOf(120f, 1000f, 6000f, 20000f)
+            val nyquistSafe = (currentSampleRate() * 0.45f).coerceAtLeast(20f)
+            val mdrcSource = floatArrayOf(120f, 1000f, 6000f, 20000f)
+            val mdrcLogSpan = kotlin.math.ln(20000.0 / 120.0)
+            val cutoffs = FloatArray(MDRC_BANDS) { i ->
+                val fraction = (kotlin.math.ln(mdrcSource[i].toDouble() / 120.0) / mdrcLogSpan).coerceIn(0.0, 1.0)
+                (120.0 * kotlin.math.exp(fraction * kotlin.math.ln(nyquistSafe.toDouble() / 120.0))).toFloat()
+            }
             for (band in 0 until MDRC_BANDS) {
                 mbc.setBand(
                     band,
@@ -159,22 +171,29 @@ class DynamicsProcessingManager {
                 val sampleRate = currentSampleRate()
                 val eq = ParametricEqualizer(sampleRate)
                 eq.clearBands()
+                val usableMaxHz = minOf(20000.0, sampleRate * 0.45).coerceAtLeast(20.0)
+                val sourceLogSpan = kotlin.math.ln(20000.0 / 20.0)
                 for (index in EqState32WithMDRC.FREQS.indices) {
+                    // At low output rates, preserve the 32-band logarithmic layout
+                    // while mapping it into the representable sub-Nyquist range.
+                    val sourceFrequency = EqState32WithMDRC.FREQS[index].coerceIn(20.0, 20000.0)
+                    val fraction = (kotlin.math.ln(sourceFrequency / 20.0) / sourceLogSpan).coerceIn(0.0, 1.0)
+                    val safeFrequency = (20.0 * kotlin.math.exp(fraction * kotlin.math.ln(usableMaxHz / 20.0))).toFloat()
                     eq.addBand(
-                        EqState32WithMDRC.FREQS[index].toFloat(),
+                        safeFrequency,
                         latest.fixedGains.getOrElse(index) { 0f }.coerceIn(-15f, 15f),
                         BiquadFilter.FilterType.BELL,
                         EQ_BAND_Q
                     )
                 }
                 if (latest.toneGains.getOrElse(0) { 0f } != 0f) {
-                    eq.addBand(100f, latest.toneGains[0].coerceIn(-12f, 12f), BiquadFilter.FilterType.LOW_SHELF, TONE_Q)
+                    eq.addBand(minOf(100f, sampleRate * 0.40f), latest.toneGains[0].coerceIn(-12f, 12f), BiquadFilter.FilterType.LOW_SHELF, TONE_Q)
                 }
                 if (latest.toneGains.getOrElse(1) { 0f } != 0f) {
-                    eq.addBand(1000f, latest.toneGains[1].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
+                    eq.addBand(minOf(1000f, sampleRate * 0.40f), latest.toneGains[1].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
                 }
                 if (latest.toneGains.getOrElse(2) { 0f } != 0f) {
-                    eq.addBand(8000f, latest.toneGains[2].coerceIn(-12f, 12f), BiquadFilter.FilterType.HIGH_SHELF, TONE_Q)
+                    eq.addBand(minOf(8000f, sampleRate * 0.40f), latest.toneGains[2].coerceIn(-12f, 12f), BiquadFilter.FilterType.HIGH_SHELF, TONE_Q)
                 }
                 eq.isEnabled = latest.isEnabled
                 ParametricToDpConverter.deviceSampleRateHz = sampleRate.toFloat()

@@ -19,6 +19,10 @@ object ParametricToDpConverter {
     private val BAND_COUNT = EQ32_FREQUENCIES.size
     private const val MIN_FREQ = 20f
     private const val MAX_FREQ = 22000f
+
+    /** Keep every analysis/cutoff frequency below Nyquist with transition margin. */
+    private fun maxUsableFrequency(sampleRateHz: Float): Float =
+        minOf(20000f, sampleRateHz * 0.45f).coerceAtLeast(20f)
     private const val GRID_SIZE = 768
     private const val ADAPT_ITERS = 256
 
@@ -56,9 +60,8 @@ object ParametricToDpConverter {
         return p
     }
 
-    private fun responseGrid(eq: ParametricEqualizer): FloatArray {
+    private fun responseGrid(eq: ParametricEqualizer, max: Float): FloatArray {
         val min = 10f
-        val max = 20000f
         val span = ln(max / min)
         return FloatArray(GRID_SIZE) { i ->
             respond(eq, min * kotlin.math.exp(span * i / (GRID_SIZE - 1)))
@@ -75,9 +78,9 @@ object ParametricToDpConverter {
         anchors: List<Float>,
         total: Int,
         binHz: Float,
+        max: Float,
     ): FloatArray {
         val min = 10f
-        val max = 20000f
         val span = ln(max / min)
 
         fun gi(f: Float): Int = ((ln(f.coerceIn(min, max) / min) / span) * (GRID_SIZE - 1) + 0.5f)
@@ -110,7 +113,7 @@ object ParametricToDpConverter {
         // response, they do not consume graphic-EQ slots.
         seed += 5f to false
         seed += 15f to false
-        for (f in WAVELET_FREQUENCIES) seed += f to false
+        for (f in WAVELET_FREQUENCIES) if (f <= max) seed += f to false
         for (f in anchors) seed += f.coerceIn(min, max) to true
         seed.sortBy { it.first }
 
@@ -183,9 +186,9 @@ object ParametricToDpConverter {
         // Keep exactly 32 monotonically increasing physical cutoffs.
         val out = FloatArray(total)
         for (i in 0 until total) {
-            out[i] = freqs.getOrElse(i) { EQ32_FREQUENCIES[i] }
-                .coerceIn(MIN_FREQ, MAX_FREQ)
-            if (i > 0 && out[i] <= out[i - 1]) out[i] = (out[i - 1] + 0.01f).coerceAtMost(MAX_FREQ)
+            out[i] = freqs.getOrElse(i) { EQ32_FREQUENCIES[i].toFloat() }
+                .coerceIn(MIN_FREQ, max)
+            if (i > 0 && out[i] <= out[i - 1]) out[i] = (out[i - 1] + 0.01f).coerceAtMost(max)
         }
         return out
     }
@@ -226,6 +229,7 @@ object ParametricToDpConverter {
     fun convertFeatureAware(eq: ParametricEqualizer): ConvertedBands {
         require(EQ32_FREQUENCIES.size == BAND_COUNT)
         val fs = deviceSampleRateHz.coerceIn(8000f, 192000f)
+        val usableMaxFreq = maxUsableFrequency(fs)
         val frameMs = frameDurationMs.coerceIn(1f, 500f)
         val n = dpBlockSize(fs)
         val binHz = fs / n
@@ -246,10 +250,11 @@ object ParametricToDpConverter {
             frozen
         } else {
             adaptiveCutoffs(
-                listOf(responseGrid(eq)),
-                collectAnchors(eq),
+                listOf(responseGrid(eq, usableMaxFreq)),
+                collectAnchors(eq, usableMaxFreq),
                 BAND_COUNT,
                 binHz,
+                usableMaxFreq,
             ).also {
                 if (layoutFrozen) {
                     frozenCutoffs = it
@@ -268,7 +273,7 @@ object ParametricToDpConverter {
         return convertFeatureAware(eq)
     }
 
-    private fun collectAnchors(eq: ParametricEqualizer): List<Float> {
+    private fun collectAnchors(eq: ParametricEqualizer, maxFrequency: Float): List<Float> {
         // Only the 32 graphic-EQ bands are physical anchors. Tone/Bass Boost
         // helper filters remain part of the analytic response but must not
         // displace any of the 32 user-controlled EQ slots.
@@ -276,7 +281,7 @@ object ParametricToDpConverter {
         return buildList(count) {
             for (i in 0 until count) {
                 val band = eq.getBand(i) ?: continue
-                if (band.enabled && band.frequency in MIN_FREQ..MAX_FREQ) add(band.frequency)
+                if (band.enabled && band.frequency in MIN_FREQ..maxFrequency) add(band.frequency)
             }
         }
     }
