@@ -39,6 +39,24 @@
             android:foregroundServiceType="mediaPlayback" />
 
 
+        <!-- Playback detection bridge adapted from Equalizer314. The user must enable
+             Notification access in Android Settings; the service does not read notification contents. -->
+        <service
+            android:name=".service.PlaybackListenerService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.notification.disabled_filter_types"
+                android:value="ongoing|silent|conversations|alerting" />
+            <meta-data
+                android:name="android.service.notification.default_filter_types"
+                android:value="" />
+        </service>
+
         <!-- Quick Settings Status Bar Tile for master EQ On/Off toggle -->
         <service
             android:name=".service.SJBStudioTileService"
