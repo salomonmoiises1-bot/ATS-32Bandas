@@ -1,6 +1,6 @@
 # SJBStudio EQ32 - 32-Band Parametric/Graphic EQ & MDRC (Sin Root)
 
-High-fidelity 32-band audio equalizer with 3-band macro tone control and 4-band Multi-Band Dynamic Range Compression (MDRC), designed for Android without requiring root privileges.
+High-fidelity 32-band audio equalizer with 3-band macro tone control and 4-band Multi-Band Dynamic Range Compression (MDRC), designed for Android API 28+ without requiring root privileges.
 
 ## Architecture Highlights
 - **Zero Root Operation**: Leverages Android API 28+ `android.media.audiofx.DynamicsProcessing` attached to session `0` (global mixed audio) or dynamically discovered third-party media sessions via `AudioSessionReceiver`.
@@ -23,7 +23,7 @@ High-fidelity 32-band audio equalizer with 3-band macro tone control and 4-band 
 1. Unzip the project folder.
 2. Open **Android Studio Hedgehog / Iguana / Jellyfish (2023.2+)**.
 3. Select **File -> Open...** and select the root directory containing `settings.gradle.kts`.
-4. Allow Gradle Sync to finish with JDK 17.
+4. Allow Gradle Sync to finish with JDK 17. The launcher bootstraps the Gradle 8.4 distribution when needed, so an internet connection is required on first use.
 5. Click **Run 'app'** or execute:
    ```bash
    ./gradlew assembleDebug
@@ -31,5 +31,5 @@ High-fidelity 32-band audio equalizer with 3-band macro tone control and 4-band 
 
 ## How to Build on GitHub Actions
 1. Push this repository to GitHub.
-2. The workflow file `.github/workflows/build.yml` will automatically trigger.
+2. The workflow file `.github/workflows/build.yml` will automatically trigger and installs Gradle 8.4 explicitly (it does not depend on the missing binary wrapper JAR).
 3. Once finished, download the compiled `app-debug.apk` from the **Actions -> Artifacts** tab.

@@ -1,31 +1,27 @@
-@rem
-@rem Copyright 2015 the original author or authors.
-@rem
-@if "%DEBUG%" == "" @echo off
-@rem ##########################################################################
-@rem
-@rem  Gradle startup script for Windows
-@rem
-@rem ##########################################################################
-
-@rem Set local scope for the variables with windows NT shell
-if "%OS%"=="Windows_NT" setlocal
-
-set DIRNAME=%~dp0
-if "%DIRNAME%" == "" set DIRNAME=.
-set APP_BASE_NAME=%~n0
-set APP_HOME=%DIRNAME%
-
-@rem Find java.exe
-if defined JAVA_HOME goto findJavaFromJavaHome
-
-set JAVA_EXE=java.exe
-%JAVA_EXE% -version >NUL 2>&1
-if "%ERRORLEVEL%" == "0" goto execute
-
-:findJavaFromJavaHome
-set JAVA_HOME=%JAVA_HOME:"=%
-set JAVA_EXE=%JAVA_HOME%/bin/java.exe
-
-:execute
-"%JAVA_EXE%" "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%APP_HOME%\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain %*
+@echo off
+setlocal
+set "APP_HOME=%~dp0"
+set "PROPS=%APP_HOME%gradle\wrapper\gradle-wrapper.properties"
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$line=Get-Content -LiteralPath '%PROPS%' | Where-Object { $_ -match '^distributionUrl=' } | Select-Object -First 1; if ($line) { ($line -replace '^distributionUrl=', '') -replace '\\:', ':' }"`) do set "DIST_URL=%%A"
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "if ('%DIST_URL%' -match 'gradle-([0-9][0-9.]*)-bin\.zip') { $Matches[1] }"`) do set "GRADLE_VERSION=%%A"
+if not defined GRADLE_VERSION (
+  echo Cannot determine Gradle version from %PROPS% 1>&2
+  exit /b 1
+)
+if not defined GRADLE_USER_HOME set "GRADLE_USER_HOME=%USERPROFILE%\.gradle"
+set "DIST_HOME=%GRADLE_USER_HOME%\manual-wrapper\gradle-%GRADLE_VERSION%"
+set "GRADLE_BIN=%DIST_HOME%\bin\gradle.bat"
+set "DOWNLOAD_DIR=%GRADLE_USER_HOME%\manual-wrapper\downloads"
+set "ZIP=%DOWNLOAD_DIR%\gradle-%GRADLE_VERSION%-bin.zip"
+if not exist "%GRADLE_BIN%" (
+  if not exist "%DOWNLOAD_DIR%" mkdir "%DOWNLOAD_DIR%"
+  if not exist "%ZIP%" (
+    echo Downloading Gradle %GRADLE_VERSION%...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%DIST_URL%' -OutFile '%ZIP%'"
+    if errorlevel 1 exit /b 1
+  )
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '%ZIP%' -DestinationPath '%GRADLE_USER_HOME%\manual-wrapper' -Force"
+  if errorlevel 1 exit /b 1
+)
+call "%GRADLE_BIN%" -p "%APP_HOME%" %*
+exit /b %ERRORLEVEL%
