@@ -3,6 +3,7 @@ package com.sjbstudio.eq32.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.media.audiofx.AudioEffect
 import android.util.Log
 import com.sjbstudio.eq32.service.EqService
@@ -28,15 +29,31 @@ class AudioSessionReceiver : BroadcastReceiver() {
                     this.action = EqService.ACTION_ATTACH_SESSION
                     putExtra(EqService.EXTRA_AUDIO_SESSION, audioSessionId)
                 }
-                context.startService(serviceIntent)
+                startServiceSafely(context, serviceIntent)
             }
             AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION -> {
                 val serviceIntent = Intent(context, EqService::class.java).apply {
                     this.action = EqService.ACTION_DETACH_SESSION
                     putExtra(EqService.EXTRA_AUDIO_SESSION, audioSessionId)
                 }
-                context.startService(serviceIntent)
+                startServiceSafely(context, serviceIntent)
             }
         }
     }
+    private fun startServiceSafely(context: Context, intent: Intent) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } catch (e: IllegalStateException) {
+            // Android can reject background starts. The foreground service remains
+            // started from the app/notification path; don't crash the broadcast.
+            Log.w(TAG, "Android rejected background DSP service start", e)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Missing permission to start DSP service", e)
+        }
+    }
+
 }
