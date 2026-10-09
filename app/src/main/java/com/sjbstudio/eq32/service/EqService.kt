@@ -46,10 +46,9 @@ class EqService : Service() {
     }
 
     private val binder = LocalBinder()
-    private val dynamicsManager = DynamicsProcessingManager()
+    private val dynamicsManagers = mutableMapOf<Int, DynamicsProcessingManager>()
     private lateinit var prefsManager: EqPreferencesManager
     private var currentState = EqState32WithMDRC()
-    private val activeSessions = mutableSetOf<Int>()
 
     inner class LocalBinder : Binder() {
         fun getService(): EqService = this@EqService
@@ -62,9 +61,8 @@ class EqService : Service() {
         currentState = prefsManager.loadCurrentState()
         createNotificationChannel()
 
-        // Attach to global mixed session 0 by default
-        activeSessions.add(0)
-        dynamicsManager.attachToSession(0, currentState)
+        // Session 0 is only a fallback until Android reports real playback sessions.
+        attachSession(0)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -78,22 +76,21 @@ class EqService : Service() {
             }
             ACTION_UPDATE_STATE -> {
                 currentState = prefsManager.loadCurrentState()
-                dynamicsManager.applyState(currentState)
+                dynamicsManagers.values.forEach { it.applyState(currentState) }
                 updateNotification()
             }
             ACTION_ATTACH_SESSION -> {
                 val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION, 0)
-                if (sessionId != 0 && !activeSessions.contains(sessionId)) {
-                    activeSessions.add(sessionId)
-                    dynamicsManager.attachToSession(sessionId, currentState)
+                if (sessionId != 0) {
+                    // Avoid processing the same output through both global and app session effects.
+                    dynamicsManagers.remove(0)?.release()
+                    attachSession(sessionId)
                 }
             }
             ACTION_DETACH_SESSION -> {
                 val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION, 0)
-                activeSessions.remove(sessionId)
-                if (activeSessions.isEmpty()) {
-                    dynamicsManager.attachToSession(0, currentState)
-                }
+                dynamicsManagers.remove(sessionId)?.release()
+                if (dynamicsManagers.keys.none { it != 0 }) attachSession(0)
             }
             ACTION_STOP -> {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -107,7 +104,7 @@ class EqService : Service() {
     fun updateState(newState: EqState32WithMDRC) {
         currentState = newState
         prefsManager.saveCurrentState(newState)
-        dynamicsManager.applyState(newState)
+        dynamicsManagers.values.forEach { it.applyState(newState) }
         updateNotification()
     }
 
@@ -145,7 +142,7 @@ class EqService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val statusText = if (currentState.isEnabled) "DSP ACTIVE · 35 Biquads + MDRC" else "DSP BYPASSED"
+        val statusText = if (currentState.isEnabled) "DSP ACTIVE · EQ32 + Tone + MDRC" else "DSP BYPASSED"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SJBStudio EQ32")
@@ -167,11 +164,28 @@ class EqService : Service() {
         manager.notify(NOTIFICATION_ID, buildForegroundNotification())
     }
 
+    @Synchronized
+    private fun attachSession(sessionId: Int) {
+        val existing = dynamicsManagers[sessionId]
+        if (existing != null) {
+            existing.applyState(currentState)
+            return
+        }
+        val manager = DynamicsProcessingManager()
+        if (manager.attachToSession(sessionId, currentState)) {
+            dynamicsManagers[sessionId] = manager
+        } else {
+            manager.release()
+            Log.w(TAG, "Unable to attach DSP to audio session $sessionId")
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "SJBStudio DSP Service onDestroy")
-        dynamicsManager.release()
+        dynamicsManagers.values.forEach { it.release() }
+        dynamicsManagers.clear()
     }
 }
