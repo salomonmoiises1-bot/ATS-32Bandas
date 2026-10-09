@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SJBStudio EQ32</string>
+    <string name="tile_label">SJBStudio EQ</string>
+    <string name="desc_eq">32-Band Audio Equalizer &amp; MDRC Dynamic Processor</string>
+</resources>

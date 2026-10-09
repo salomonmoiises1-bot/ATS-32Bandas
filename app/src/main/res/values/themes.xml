@@ -1,1 +1,13 @@
-
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SJBStudio" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/amoled_black</item>
+        <item name="android:colorBackground">@color/amoled_black</item>
+        <item name="colorPrimary">@color/neon_cyan</item>
+        <item name="colorSecondary">@color/neon_violet</item>
+        <item name="colorSurface">@color/surface_card</item>
+        <item name="android:statusBarColor">@color/amoled_black</item>
+        <item name="android:navigationBarColor">@color/amoled_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

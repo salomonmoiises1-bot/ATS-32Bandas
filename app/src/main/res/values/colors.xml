@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pitch Black AMOLED Studio Theme -->
+    <color name="amoled_black">#000000</color>
+    <color name="surface_dark">#09090b</color>
+    <color name="surface_card">#121215</color>
+    <color name="stroke_subtle">#1f242e</color>
+
+    <!-- Neon Accents -->
+    <color name="neon_cyan">#06b6d4</color>
+    <color name="halo_cyan">#2206b6d4</color>
+    <color name="neon_violet">#a855f7</color>
+    <color name="halo_violet">#22a855f7</color>
+
+    <!-- Typography -->
+    <color name="text_primary">#f8fafc</color>
+    <color name="text_secondary">#94a3b8</color>
+    <color name="text_muted">#475569</color>
+
+    <!-- Sliders -->
+    <color name="slider_track_inactive">#1e293b</color>
+</resources>
