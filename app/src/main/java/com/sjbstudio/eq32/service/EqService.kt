@@ -4,6 +4,10 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
+import android.os.Binder
+import android.os.Handler
+import android.os.Looper
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -47,6 +51,22 @@ class EqService : Service() {
     private lateinit var prefsManager: EqPreferencesManager
     private var currentState = EqState32WithMDRC()
     private var currentActiveSession: Int = 0
+    private val sessionHandler = Handler(Looper.getMainLooper())
+    private var playbackCallbackRegistered = false
+    private val playbackCallback = object : AudioManager.AudioPlaybackCallback() {
+        override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
+            refreshActiveSession()
+        }
+    }
+    private val sessionRefresh = object : Runnable {
+        override fun run() {
+            if (!serviceDestroyed) {
+                refreshActiveSession()
+                sessionHandler.postDelayed(this, 2000L)
+            }
+        }
+    }
+    @Volatile private var serviceDestroyed = false
 
     inner class LocalBinder : Binder() {
         fun getService(): EqService = this@EqService
@@ -57,6 +77,14 @@ class EqService : Service() {
         prefsManager = EqPreferencesManager(this)
         currentState = prefsManager.loadCurrentState()
         createNotificationChannel()
+        val audioManager = getSystemService(AudioManager::class.java)
+        try {
+            audioManager?.registerAudioPlaybackCallback(playbackCallback, sessionHandler)
+            playbackCallbackRegistered = audioManager != null
+        } catch (e: Exception) {
+            Log.w(TAG, "Playback callback registration unavailable", e)
+        }
+        sessionHandler.post(sessionRefresh)
         refreshActiveSession()
     }
 
@@ -254,6 +282,15 @@ class EqService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        serviceDestroyed = true
+        sessionHandler.removeCallbacks(sessionRefresh)
+        try {
+            if (playbackCallbackRegistered) {
+                getSystemService(AudioManager::class.java)?.unregisterAudioPlaybackCallback(playbackCallback)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Playback callback unregister failed", e)
+        }
         super.onDestroy()
         Log.d(TAG, "SJBStudio DSP Service onDestroy")
         dynamicsManagers.values.forEach { it.release() }
