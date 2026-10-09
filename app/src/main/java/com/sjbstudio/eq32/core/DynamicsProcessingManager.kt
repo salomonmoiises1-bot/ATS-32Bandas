@@ -168,13 +168,13 @@ class DynamicsProcessingManager {
                     )
                 }
                 if (latest.toneGains.getOrElse(0) { 0f } != 0f) {
-                    eq.addBand(120f, latest.toneGains[0].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
+                    eq.addBand(100f, latest.toneGains[0].coerceIn(-12f, 12f), BiquadFilter.FilterType.LOW_SHELF, TONE_Q)
                 }
                 if (latest.toneGains.getOrElse(1) { 0f } != 0f) {
                     eq.addBand(1000f, latest.toneGains[1].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
                 }
                 if (latest.toneGains.getOrElse(2) { 0f } != 0f) {
-                    eq.addBand(8000f, latest.toneGains[2].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
+                    eq.addBand(8000f, latest.toneGains[2].coerceIn(-12f, 12f), BiquadFilter.FilterType.HIGH_SHELF, TONE_Q)
                 }
                 eq.isEnabled = latest.isEnabled
                 ParametricToDpConverter.deviceSampleRateHz = sampleRate.toFloat()

@@ -1,6 +1,7 @@
 package com.sjbstudio.eq32.core
 
 import kotlin.math.abs
+import com.sjbstudio.eq32.state.EqState32WithMDRC
 import kotlin.math.ln
 import kotlin.math.sqrt
 
