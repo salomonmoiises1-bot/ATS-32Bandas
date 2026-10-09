@@ -13,6 +13,9 @@ jobs:
     name: Build Signed Release APK
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,12 +26,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Install Android SDK components
         run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
       - name: Set up Gradle 8.4
         uses: gradle/actions/setup-gradle@v4
@@ -40,46 +51,43 @@ jobs:
 
       - name: Prepare signing key
         env:
-          EQ32_KEYSTORE_BASE64: ${{ secrets.EQ32_KEYSTORE_BASE64 }}
+          KEYSTORE_BASE64: ${{ secrets.EQ32_KEYSTORE_BASE64 }}
         run: |
-          test -n "$EQ32_KEYSTORE_BASE64"
-          echo "$EQ32_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/eq32-release.jks"
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          printf '%s' "$KEYSTORE_BASE64" \
+            | base64 --decode > "$RUNNER_TEMP/eq32-release.jks"
           test -s "$RUNNER_TEMP/eq32-release.jks"
 
       - name: Sign Release APK
         env:
-          EQ32_KEYSTORE_PASSWORD: ${{ secrets.EQ32_KEYSTORE_PASSWORD }}
-          EQ32_KEY_ALIAS: ${{ secrets.EQ32_KEY_ALIAS }}
-          EQ32_KEY_PASSWORD: ${{ secrets.EQ32_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.EQ32_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.EQ32_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.EQ32_KEY_PASSWORD }}
         run: |
           set -euo pipefail
 
-          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          ZIPALIGN="$BUILD_TOOLS/zipalign"
-          APKSIGNER="$BUILD_TOOLS/apksigner"
-
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
           INPUT="app/build/outputs/apk/release/app-release-unsigned.apk"
-          ALIGNED="$RUNNER_TEMP/eq32-release-aligned.apk"
+          ALIGNED="$RUNNER_TEMP/eq32-aligned.apk"
           OUTPUT="app/build/outputs/apk/release/SJBStudio-EQ32-Release.apk"
 
           test -f "$INPUT"
-          test -x "$ZIPALIGN"
-          test -x "$APKSIGNER"
-          test -n "$EQ32_KEYSTORE_PASSWORD"
-          test -n "$EQ32_KEY_ALIAS"
-          test -n "$EQ32_KEY_PASSWORD"
+          test -n "$STORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
 
-          "$ZIPALIGN" -f -p 4 "$INPUT" "$ALIGNED"
+          "$BUILD_TOOLS/zipalign" -f -p 4 "$INPUT" "$ALIGNED"
 
-          "$APKSIGNER" sign \
+          "$BUILD_TOOLS/apksigner" sign \
             --ks "$RUNNER_TEMP/eq32-release.jks" \
-            --ks-key-alias "$EQ32_KEY_ALIAS" \
-            --ks-pass env:EQ32_KEYSTORE_PASSWORD \
-            --key-pass env:EQ32_KEY_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:STORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
             --out "$OUTPUT" \
             "$ALIGNED"
 
-          "$APKSIGNER" verify --verbose "$OUTPUT"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$OUTPUT"
 
       - name: Upload signed Release APK
         uses: actions/upload-artifact@v4
