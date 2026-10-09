@@ -25,28 +25,23 @@ data class EqState32WithMDRC(
             1723.91, 2154.21, 2691.92, 3363.85, 4203.5, 5252.73, 6563.86, 8202.25, 10249.61, 12808.01,
             16005.0, 20000.0
         )
-        const val Q = 1.4142
+        const val Q = 4.318
 
         // MDRC Band Split Crossover Frequencies (4 bands)
         val MDRC_SPLITS = doubleArrayOf(120.0, 1000.0, 6000.0)
     }
 
     /**
-     * Converts current state into 35 Bi-quadratic filter configurations:
-     * 3 macro Tone filters + 32 parametric peaking bands.
+     * Analytic response for the graph only: 32 EQ controls plus three tone controls.
+     * The live Android backend converts this combined response into exactly 32
+     * physical Pre-EQ bands; these 35 curve components are not 35 DSP bands.
      */
     fun toBiquads(fs: Int = 48000): List<BiquadConfig> {
         val list = mutableListOf<BiquadConfig>()
-        // Macro Tone controls
-        list.add(BiquadConfig.LowShelf(100.0, toneGains[0]))
-        list.add(BiquadConfig.Peaking(1000.0, Q, toneGains[1]))
-        list.add(BiquadConfig.HighShelf(8000.0, toneGains[2]))
-
-        // 32 Precision ISO Bands
-        FREQS.forEachIndexed { i, f ->
-            val gain = if (i < fixedGains.size) fixedGains[i] else 0f
-            list.add(BiquadConfig.Peaking(f, Q, gain))
-        }
+        if (toneGains.getOrElse(0) { 0f } != 0f) list.add(BiquadConfig.Peaking(120.0, 0.707, toneGains[0]))
+        if (toneGains.getOrElse(1) { 0f } != 0f) list.add(BiquadConfig.Peaking(1000.0, 0.707, toneGains[1]))
+        if (toneGains.getOrElse(2) { 0f } != 0f) list.add(BiquadConfig.Peaking(8000.0, 0.707, toneGains[2]))
+        FREQS.forEachIndexed { i, f -> list.add(BiquadConfig.Peaking(f, Q, fixedGains.getOrElse(i) { 0f })) }
         return list
     }
 
