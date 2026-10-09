@@ -1,0 +1,207 @@
+package com.sjbstudio.eq32.core
+
+import kotlin.math.pow
+
+/**
+ * Parametric Equalizer - Custom DSP implementation
+ * Allows full control over frequency, gain, and filter type for each band
+ */
+// sampleRate default 48000 = device-output rate on virtually every modern
+// device. EqStateManager overrides with the actual AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE
+// for audio-path instances; non-audio callers (preset import, target curve,
+// auto-EQ) accept the default (response-curve computation only).
+class ParametricEqualizer(private val sampleRate: Int = 48000) {
+
+    /** Which output channel(s) a band applies to (issue #53). BOTH is the
+     *  default and the only value used outside Channel-Side-EQ mode. */
+    enum class Channel { BOTH, LEFT, RIGHT }
+
+    data class EqualizerBand(
+        var frequency: Float,      // Hz (20-20000)
+        var gain: Float,            // dB (-20 to +20)
+        var filterType: BiquadFilter.FilterType,
+        var q: Double = 0.707,      // Q factor (0.1 to 10.0)
+        var enabled: Boolean = true,
+        var channel: Channel = Channel.BOTH
+    )
+
+    private val bands = mutableListOf<EqualizerBand>()
+    private val filters = mutableListOf<BiquadFilter>()
+
+    var isEnabled = false
+        set(value) {
+            field = value
+            if (!value) {
+                filters.forEach { it.reset() }
+            }
+        }
+
+    init {
+        addDefaultBands()
+    }
+
+    private fun addDefaultBands() {
+        // Start with 4 bands at slots 0,1,2,3 using those exact default frequencies
+        // so initBandSlots() assigns them to slots 0-3 (displayed as 1,2,3,4)
+        val allFreqs = logSpacedFrequencies(16)
+        for (i in 0..3) {
+            addBand(allFreqs[i], 0f, BiquadFilter.FilterType.BELL)
+        }
+    }
+
+    companion object {
+        /** Compute n log-spaced frequencies across 10–22000 Hz */
+        fun logSpacedFrequencies(n: Int): FloatArray {
+            val logMin = kotlin.math.log10(10f)
+            val logMax = kotlin.math.log10(22000f)
+            return FloatArray(n) { i -> 10f.pow(logMin + i * (logMax - logMin) / (n - 1)) }
+        }
+    }
+
+    fun clearBands() {
+        bands.clear()
+        filters.clear()
+    }
+
+    fun addBand(frequency: Float, gain: Float, filterType: BiquadFilter.FilterType, q: Double = 0.707) {
+        val band = EqualizerBand(frequency, gain, filterType, q, true)
+        bands.add(band)
+
+        val filter = BiquadFilter(frequency, gain, filterType, sampleRate, q).apply {
+            // RBJ bell (not Vicanek): RBJ's +G/-G peaking filters are exact
+            // inverses (num↔den swap via A and 1/A), so opposite bells cancel
+            // perfectly in graph AND audio (DP converter samples this same
+            // response). Vicanek matched only DC/center/Nyquist, leaving ripple
+            // that broke cancellation (issue #41).
+            useVicanekMethod = false
+        }
+        filters.add(filter)
+    }
+
+    fun insertBand(index: Int, frequency: Float, gain: Float, filterType: BiquadFilter.FilterType, q: Double = 0.707) {
+        val band = EqualizerBand(frequency, gain, filterType, q, true)
+        bands.add(index, band)
+
+        val filter = BiquadFilter(frequency, gain, filterType, sampleRate, q).apply {
+            // RBJ bell (not Vicanek): RBJ's +G/-G peaking filters are exact
+            // inverses (num↔den swap via A and 1/A), so opposite bells cancel
+            // perfectly in graph AND audio (DP converter samples this same
+            // response). Vicanek matched only DC/center/Nyquist, leaving ripple
+            // that broke cancellation (issue #41).
+            useVicanekMethod = false
+        }
+        filters.add(index, filter)
+    }
+
+    fun removeBand(index: Int) {
+        if (index in bands.indices) {
+            bands.removeAt(index)
+            filters.removeAt(index)
+        }
+    }
+
+    fun updateBand(index: Int, frequency: Float, gain: Float, filterType: BiquadFilter.FilterType, q: Double = bands.getOrNull(index)?.q ?: 0.707) {
+        if (index in bands.indices) {
+            bands[index].frequency = frequency
+            bands[index].gain = gain
+            bands[index].filterType = filterType
+            bands[index].q = q
+
+            filters[index].updateParameters(frequency, gain, filterType, q)
+        }
+    }
+
+    fun setBandEnabled(index: Int, enabled: Boolean) {
+        if (index in bands.indices) {
+            bands[index].enabled = enabled
+        }
+    }
+
+    fun getBand(index: Int): EqualizerBand? = bands.getOrNull(index)
+
+    fun getBandCount(): Int = bands.size
+
+    fun getAllBands(): List<EqualizerBand> = bands.toList()
+
+    /**
+     * Process stereo audio buffer
+     * Input/output format: interleaved stereo (L, R, L, R, ...)
+     */
+    fun process(buffer: FloatArray) {
+        if (!isEnabled) return
+
+        var i = 0
+        while (i < buffer.size - 1) {
+            for (j in filters.indices) {
+                if (bands[j].enabled) {
+                    filters[j].processStereoInPlace(buffer, i)
+                }
+            }
+
+            i += 2
+        }
+    }
+
+    fun reset() {
+        filters.forEach { it.reset() }
+    }
+
+    fun getFrequencyResponse(frequency: Float): Float {
+        var totalMagnitude = 1f
+
+        for (i in filters.indices) {
+            if (bands[i].enabled) {
+                val magnitude = filters[i].getFrequencyResponse(frequency)
+                totalMagnitude *= magnitude
+            }
+        }
+
+        return 20f * kotlin.math.log10(totalMagnitude.coerceAtLeast(0.0001f))
+    }
+
+    /** Response of a single band in dB at [frequency]. Used by the
+     *  graph's per-band curve overlay (issue #40) to draw each
+     *  filter's individual contribution under the summed white curve.
+     *  Returns 0 dB for an out-of-range index or a disabled band so
+     *  callers can skip drawing flat lines. */
+    fun getBandFrequencyResponse(index: Int, frequency: Float): Float {
+        val filter = filters.getOrNull(index) ?: return 0f
+        if (bands.getOrNull(index)?.enabled != true) return 0f
+        val magnitude = filter.getFrequencyResponse(frequency)
+        return 20f * kotlin.math.log10(magnitude.coerceAtLeast(0.0001f))
+    }
+
+    fun loadPreset(presetName: String) {
+        when (presetName) {
+            "Flat" -> {
+                bands.forEachIndexed { index, _ ->
+                    updateBand(index, bands[index].frequency, 0f, bands[index].filterType, bands[index].q)
+                }
+            }
+            "Bass Boost" -> {
+                bands.forEachIndexed { index, _ ->
+                    // Boost low bands, leave rest flat
+                    val ratio = 1f - (index.toFloat() / (bands.size - 1).coerceAtLeast(1))
+                    val gain = (ratio * 8f).coerceAtLeast(0f)
+                    updateBand(index, bands[index].frequency, gain, bands[index].filterType, bands[index].q)
+                }
+            }
+            "Treble Boost" -> {
+                bands.forEachIndexed { index, _ ->
+                    val ratio = index.toFloat() / (bands.size - 1).coerceAtLeast(1)
+                    val gain = (ratio * 8f).coerceAtLeast(0f)
+                    updateBand(index, bands[index].frequency, gain, bands[index].filterType, bands[index].q)
+                }
+            }
+            "Vocal Enhance" -> {
+                bands.forEachIndexed { index, _ ->
+                    // Mid-focused boost
+                    val center = (bands.size - 1) / 2f
+                    val dist = kotlin.math.abs(index - center) / center.coerceAtLeast(1f)
+                    val gain = (1f - dist) * 4f - 1f
+                    updateBand(index, bands[index].frequency, gain, bands[index].filterType, bands[index].q)
+                }
+            }
+        }
+    }
+}

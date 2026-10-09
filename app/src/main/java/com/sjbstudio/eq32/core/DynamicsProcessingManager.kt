@@ -1,5 +1,7 @@
 package com.sjbstudio.eq32.core
 
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.DynamicsProcessing.Config
 import android.media.audiofx.DynamicsProcessing.Eq
@@ -7,179 +9,209 @@ import android.media.audiofx.DynamicsProcessing.EqBand
 import android.media.audiofx.DynamicsProcessing.Mbc
 import android.media.audiofx.DynamicsProcessing.MbcBand
 import android.media.audiofx.DynamicsProcessing.Limiter
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
-import com.sjbstudio.eq32.state.BiquadConfig
 import com.sjbstudio.eq32.state.EqState32WithMDRC
-import kotlin.math.log10
-import kotlin.math.pow
+import kotlin.math.abs
 
+/**
+ * Android DynamicsProcessing adapter aligned to the EQ314-style 32-band path:
+ * logical 32-band parametric response -> feature-aware 32-band DP conversion -> MBC -> limiter.
+ * Tone controls are included in the target response and do not create bands 33-35.
+ */
 class DynamicsProcessingManager {
-
     companion object {
         private const val TAG = "DynamicsProcMgr"
-        private const val DEFAULT_SAMPLE_RATE = 48000
+        private const val REQUESTED_EQ_BANDS = 32
+        private const val MDRC_BANDS = 4
+        private const val EQ_BAND_Q = 4.318
+        private const val TONE_Q = 0.707
+        private const val DP_FRAME_DURATION_MS = 80f
+        private const val MIN_EQ_WRITE_SPACING_MS = 16L
+        private const val MIN_CUTOFF_HZ = 20f
+        private const val MAX_CUTOFF_HZ = 22000f
     }
 
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var currentSessionId: Int = 0
     private var isEffectEnabled: Boolean = false
+    private var lastMdrcEnabled: Boolean? = null
+    @Volatile private var latestState: EqState32WithMDRC = EqState32WithMDRC()
+    @Volatile private var pendingEqWrite: Runnable? = null
+    @Volatile private var lastEqWriteMs: Long = 0L
+    private val eqWorkerThread = HandlerThread("ATS-Eq32-DpWorker").apply { start() }
+    private val eqWorker = Handler(eqWorkerThread.looper)
 
-    /**
-     * Initializes or re-attaches DynamicsProcessing to an AudioSession ID.
-     * AudioSession 0 targets global mix on supporting chipsets (Snapdragon/MediaTek/Pixel);
-     * specific session IDs target individual apps (Spotify, Deezer, etc.)
-     */
+    @Synchronized
     fun attachToSession(sessionId: Int, state: EqState32WithMDRC): Boolean {
-        try {
-            release()
-            currentSessionId = sessionId
-
+        latestState = state
+        releaseEffect()
+        currentSessionId = sessionId
+        return try {
             val config = buildDynamicsConfig(state)
-            dynamicsProcessing = DynamicsProcessing(0, sessionId, config).apply {
-                enabled = state.isEnabled
-            }
+            val dp = DynamicsProcessing(0, sessionId, config)
+            dp.enabled = state.isEnabled
+            dynamicsProcessing = dp
             isEffectEnabled = state.isEnabled
-            Log.d(TAG, "Attached DynamicsProcessing to AudioSession: $sessionId successfully")
-            return true
+            lastMdrcEnabled = state.mdrcEnabled
+            ParametricToDpConverter.deviceSampleRateHz = currentSampleRate().toFloat()
+            ParametricToDpConverter.frameDurationMs = DP_FRAME_DURATION_MS
+            ParametricToDpConverter.layoutFrozen = true
+            scheduleEqWrite(state)
+            Log.i(TAG, "Attached EQ32 DSP to session=$sessionId (32 graphic bands + 4-band MDRC + limiter)")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to attach DynamicsProcessing to session $sessionId: ${e.message}", e)
+            Log.e(TAG, "Failed to attach DynamicsProcessing to session $sessionId", e)
             dynamicsProcessing = null
-            return false
+            isEffectEnabled = false
+            false
         }
     }
 
-    /**
-     * Builds complete DSP pipeline configuration:
-     * Pre-EQ (35 bands or logarithmically downmixed) -> MDRC (4-band MBC) -> Post-EQ -> Limiter
-     */
     private fun buildDynamicsConfig(state: EqState32WithMDRC): Config {
-        val biquads = state.toBiquads(DEFAULT_SAMPLE_RATE)
-        val bandCount = biquads.size // 35 bands
-
-        // 1. Configure Pre-EQ
+        val bandCount = EqState32WithMDRC.FREQS.size
+        require(bandCount == REQUESTED_EQ_BANDS) { "EQ32 requires exactly 32 bands" }
         val preEq = Eq(true, true, bandCount)
-        biquads.forEachIndexed { index, bq ->
-            val freq = when (bq) {
-                is BiquadConfig.LowShelf -> bq.freq.toFloat()
-                is BiquadConfig.Peaking -> bq.freq.toFloat()
-                is BiquadConfig.HighShelf -> bq.freq.toFloat()
-            }
-            val gain = when (bq) {
-                is BiquadConfig.LowShelf -> bq.gainDb
-                is BiquadConfig.Peaking -> bq.gainDb
-                is BiquadConfig.HighShelf -> bq.gainDb
-            }
-            val eqBand = EqBand(true, freq, gain)
-            preEq.setBand(index, eqBand)
+        EqState32WithMDRC.FREQS.forEachIndexed { index, frequency ->
+            preEq.setBand(index, EqBand(state.isEnabled, frequency.toFloat(), 0f))
         }
 
-        // 2. Configure Multi-Band Dynamic Range Compression (MDRC - 4 bands)
-        val mbc = Mbc(state.mdrcEnabled, true, 4)
+        val mbc = Mbc(state.mdrcEnabled, true, MDRC_BANDS)
         if (state.mdrcEnabled) {
             val cutoffs = floatArrayOf(120f, 1000f, 6000f, 20000f)
-            for (band in 0 until 4) {
-                val threshold = state.mdrcThreshold[band]
-                val ratio = state.mdrcRatio[band]
-                val attack = state.mdrcAttack[band]
-                val release = state.mdrcRelease[band]
-                val makeup = state.mdrcMakeup[band]
-
-                val mbcBand = MbcBand(
-                    true,
-                    cutoffs[band],
-                    attack,
-                    release,
-                    ratio,
-                    threshold,
-                    0.0f, // knee width
-                    0.0f, // noise gate
-                    0.0f, // expander ratio
-                    0.0f, // pre-gain
-                    makeup // post-gain makeup
+            for (band in 0 until MDRC_BANDS) {
+                mbc.setBand(
+                    band,
+                    MbcBand(
+                        true,
+                        cutoffs[band],
+                        state.mdrcAttack.getOrElse(band) { 20f }.coerceIn(1f, 100f),
+                        state.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f),
+                        state.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f),
+                        state.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-60f, 0f),
+                        0f, 0f, 0f, 0f,
+                        state.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f)
+                    )
                 )
-                mbc.setBand(band, mbcBand)
             }
         }
 
-        // 3. Configure Final Output Peak Limiter (Brickwall anti-clipping protection)
-        val limiter = Limiter(
-            true,   // inUse
-            true,   // enabled
-            0,      // linkGroup
-            1.0f,   // attackTime ms
-            50.0f,  // releaseTime ms
-            20.0f,  // ratio (brickwall)
-            -0.5f,  // threshold in dB
-            0.0f    // postGain
-        )
-
-        // Assembly of full stereo channels
+        val limiter = Limiter(true, true, 0, 1f, 50f, 20f, -0.5f, 0f)
         val builder = Config.Builder(
-            Config.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
-            2,                  // stereo (2 channels)
-            true, bandCount,    // Pre-EQ enabled with 35 bands
-            state.mdrcEnabled, 4, // MBC enabled with 4 bands
-            false, 0,           // Post-EQ disabled to reduce latency
-            true                // Limiter enabled
+            DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+            2,
+            true, bandCount,
+            state.mdrcEnabled, MDRC_BANDS,
+            false, 0,
+            true
         )
-
-        builder.setPreferredFrameDuration(5.0f) // 5ms buffer for low latency
+        builder.setPreferredFrameDuration(DP_FRAME_DURATION_MS)
         val config = builder.build()
-
-        // Assign channel configurations
-        for (ch in 0 until 2) {
-            config.setPreEqByChannelIndex(ch, preEq)
-            if (state.mdrcEnabled) {
-                config.setMbcByChannelIndex(ch, mbc)
-            }
-            config.setLimiterByChannelIndex(ch, limiter)
+        for (channel in 0 until 2) {
+            config.setPreEqByChannelIndex(channel, preEq)
+            if (state.mdrcEnabled) config.setMbcByChannelIndex(channel, mbc)
+            config.setLimiterByChannelIndex(channel, limiter)
         }
-
         return config
     }
 
-    /**
-     * Applies full EqState update without interrupting audio stream.
-     */
+    @Synchronized
     fun applyState(state: EqState32WithMDRC) {
+        latestState = state
         val dp = dynamicsProcessing ?: return
         try {
+            if (lastMdrcEnabled != null && lastMdrcEnabled != state.mdrcEnabled) {
+                attachToSession(currentSessionId, state)
+                return
+            }
             dp.enabled = state.isEnabled
-
+            isEffectEnabled = state.isEnabled
             if (!state.isEnabled) return
-
-            val biquads = state.toBiquads(DEFAULT_SAMPLE_RATE)
-
-            // Update Pre-EQ bands dynamically
-            for (ch in 0 until 2) {
-                biquads.forEachIndexed { index, bq ->
-                    val gain = when (bq) {
-                        is BiquadConfig.LowShelf -> bq.gainDb
-                        is BiquadConfig.Peaking -> bq.gainDb
-                        is BiquadConfig.HighShelf -> bq.gainDb
-                    }
-                    val band = dp.getPreEqBandByChannelIndex(ch, index)
-                    band.gain = gain
-                    dp.setPreEqBandByChannelIndex(ch, index, band)
-                }
-
-                // Update MDRC if enabled
+            scheduleEqWrite(state)
+            for (channel in 0 until dp.channelCount) {
                 if (state.mdrcEnabled) {
-                    for (b in 0 until 4) {
-                        val mbcBand = dp.getMbcBandByChannelIndex(ch, b)
-                        mbcBand.threshold = state.mdrcThreshold[b]
-                        mbcBand.ratio = state.mdrcRatio[b]
-                        mbcBand.attackTime = state.mdrcAttack[b]
-                        mbcBand.releaseTime = state.mdrcRelease[b]
-                        mbcBand.postGain = state.mdrcMakeup[b]
-                        dp.setMbcBandByChannelIndex(ch, b, mbcBand)
+                    for (band in 0 until MDRC_BANDS) {
+                        val nativeBand = dp.getMbcBandByChannelIndex(channel, band)
+                        nativeBand.threshold = state.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-60f, 0f)
+                        nativeBand.ratio = state.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f)
+                        nativeBand.attackTime = state.mdrcAttack.getOrElse(band) { 20f }.coerceIn(1f, 100f)
+                        nativeBand.releaseTime = state.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f)
+                        nativeBand.postGain = state.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f)
+                        dp.setMbcBandByChannelIndex(channel, band, nativeBand)
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Dynamic parameter update fallback, rebuilding config: ${e.message}")
+            Log.w(TAG, "Realtime update failed; rebuilding session config", e)
             attachToSession(currentSessionId, state)
         }
+    }
+
+    private fun scheduleEqWrite(state: EqState32WithMDRC) {
+        latestState = state
+        pendingEqWrite?.let(eqWorker::removeCallbacks)
+        val job = Runnable {
+            val latest = latestState
+            val dp = dynamicsProcessing ?: return@Runnable
+            try {
+                val sampleRate = currentSampleRate()
+                val eq = ParametricEqualizer(sampleRate)
+                eq.clearBands()
+                for (index in EqState32WithMDRC.FREQS.indices) {
+                    eq.addBand(
+                        EqState32WithMDRC.FREQS[index].toFloat(),
+                        latest.fixedGains.getOrElse(index) { 0f }.coerceIn(-15f, 15f),
+                        BiquadFilter.FilterType.BELL,
+                        EQ_BAND_Q
+                    )
+                }
+                if (latest.toneGains.getOrElse(0) { 0f } != 0f) {
+                    eq.addBand(120f, latest.toneGains[0].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
+                }
+                if (latest.toneGains.getOrElse(1) { 0f } != 0f) {
+                    eq.addBand(1000f, latest.toneGains[1].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
+                }
+                if (latest.toneGains.getOrElse(2) { 0f } != 0f) {
+                    eq.addBand(8000f, latest.toneGains[2].coerceIn(-12f, 12f), BiquadFilter.FilterType.BELL, TONE_Q)
+                }
+                eq.isEnabled = latest.isEnabled
+                ParametricToDpConverter.deviceSampleRateHz = sampleRate.toFloat()
+                ParametricToDpConverter.frameDurationMs = DP_FRAME_DURATION_MS
+                ParametricToDpConverter.layoutFrozen = true
+                val converted = ParametricToDpConverter.convertFeatureAware(eq)
+                if (converted.cutoffs.size != REQUESTED_EQ_BANDS || converted.gains.size != REQUESTED_EQ_BANDS) {
+                    error("Converter must return exactly 32 bands")
+                }
+                val channels = dp.channelCount.coerceAtMost(2)
+                for (channel in 0 until channels) {
+                    val stage = Eq(true, true, REQUESTED_EQ_BANDS)
+                    for (index in 0 until REQUESTED_EQ_BANDS) {
+                        val cutoff = converted.cutoffs[index].coerceIn(MIN_CUTOFF_HZ, MAX_CUTOFF_HZ)
+                        val gain = if (latest.isEnabled) converted.gains[index].coerceIn(-15f, 15f) else 0f
+                        stage.setBand(index, EqBand(latest.isEnabled, cutoff, gain))
+                    }
+                    if (channel == 0) dp.setPreEqByChannelIndex(0, stage)
+                    else dp.setPreEqByChannelIndex(channel, stage)
+                }
+                lastEqWriteMs = SystemClock.uptimeMillis()
+                Log.d(TAG, "Applied converted EQ32 response to session=$currentSessionId")
+            } catch (e: Exception) {
+                Log.e(TAG, "EQ32 response conversion/write failed for session=$currentSessionId", e)
+            } finally {
+                pendingEqWrite = null
+            }
+        }
+        pendingEqWrite = job
+        val delay = (lastEqWriteMs + MIN_EQ_WRITE_SPACING_MS - SystemClock.uptimeMillis()).coerceIn(0L, MIN_EQ_WRITE_SPACING_MS)
+        eqWorker.postDelayed(job, delay)
+    }
+
+    private fun currentSampleRate(): Int = try {
+        AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC).coerceIn(8000, 192000)
+    } catch (_: Exception) {
+        48000
     }
 
     fun setMasterEnabled(enabled: Boolean) {
@@ -187,20 +219,30 @@ class DynamicsProcessingManager {
             isEffectEnabled = enabled
             dynamicsProcessing?.enabled = enabled
         } catch (e: Exception) {
-            Log.e(TAG, "Error setting master enabled: ${e.message}")
+            Log.e(TAG, "Error setting master enabled", e)
         }
     }
 
     fun isEnabled(): Boolean = isEffectEnabled
 
+    @Synchronized
     fun release() {
+        pendingEqWrite?.let(eqWorker::removeCallbacks)
+        pendingEqWrite = null
+        releaseEffect()
+        eqWorkerThread.quitSafely()
+    }
+
+    private fun releaseEffect() {
         try {
             dynamicsProcessing?.enabled = false
             dynamicsProcessing?.release()
         } catch (e: Exception) {
-            Log.w(TAG, "Error releasing DynamicsProcessing: ${e.message}")
+            Log.w(TAG, "Error releasing DynamicsProcessing", e)
         } finally {
             dynamicsProcessing = null
+            lastMdrcEnabled = null
+            isEffectEnabled = false
         }
     }
 }
