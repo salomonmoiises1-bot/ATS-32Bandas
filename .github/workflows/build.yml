@@ -1,61 +1,38 @@
-name: Build APK
-on: [push]
+name: Build SJBStudio APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
 jobs:
   build:
+    name: Build Debug APK
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to gradlew
+        run: chmod +x gradlew
+
+      - name: Assemble Debug APK
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          gradle-version: 8.7
-
-      - name: Unzip
-        run: |
-          for z in *.zip *.ZIP; do [ -f "$z" ] && unzip -o "$z"; done
-          ls -la
-          ls -la app
-
-      - name: Fix Gradle
-        run: |
-          echo "include ':app'" > settings.gradle
-          cat > build.gradle <<'EOF'
-          buildscript {
-              repositories {
-                  google()
-                  mavenCentral()
-                  maven { url "https://jcenter.bintray.com" }
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:8.1.4'
-              }
-          }
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-                  maven { url "https://jcenter.bintray.com" }
-                  maven { url "https://jitpack.io" }
-              }
-          }
-          EOF
-
-      - name: Fix ListenableFuture
-        run: |
-          sed -i '/ListenableFuture/d' app/build.gradle
-          sed -i '/com.google.common.util.concurrent/d' app/build.gradle
-          mkdir -p app/src/main/res/xml
-          printf "<?xml version=\"1.0\" encoding=\"utf-8\"?><data-extraction-rules><cloud-backup><include domain=\"sharedpref\"/><include domain=\"database\"/></cloud-backup></data-extraction-rules>" > app/src/main/res/xml/data_extraction_rules.xml
-          printf "<?xml version=\"1.0\" encoding=\"utf-8\"?><full-backup-content><include domain=\"sharedpref\"/><include domain=\"database\"/></full-backup-content>" > app/src/main/res/xml/backup_rules.xml
-          # agrega el fix DENTRO de dependencies
-          sed -i "/dependencies {/a implementation 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava'" app/build.gradle
-
-      - run: gradle assembleDebug
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: APK
-          path: app/build/outputs/apk/debug/*.apk
+          name: sjbstudio-eq32-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
