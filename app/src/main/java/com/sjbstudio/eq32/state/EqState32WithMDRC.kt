@@ -38,9 +38,9 @@ data class EqState32WithMDRC(
      */
     fun toBiquads(fs: Int = 48000): List<BiquadConfig> {
         val list = mutableListOf<BiquadConfig>()
-        if (toneGains.getOrElse(0) { 0f } != 0f) list.add(BiquadConfig.Peaking(120.0, 0.707, toneGains[0]))
+        if (toneGains.getOrElse(0) { 0f } != 0f) list.add(BiquadConfig.LowShelf(100.0, toneGains[0], 1.0))
         if (toneGains.getOrElse(1) { 0f } != 0f) list.add(BiquadConfig.Peaking(1000.0, 0.707, toneGains[1]))
-        if (toneGains.getOrElse(2) { 0f } != 0f) list.add(BiquadConfig.Peaking(8000.0, 0.707, toneGains[2]))
+        if (toneGains.getOrElse(2) { 0f } != 0f) list.add(BiquadConfig.HighShelf(8000.0, toneGains[2], 1.0))
         FREQS.forEachIndexed { i, f -> list.add(BiquadConfig.Peaking(f, Q, fixedGains.getOrElse(i) { 0f })) }
         return list
     }
