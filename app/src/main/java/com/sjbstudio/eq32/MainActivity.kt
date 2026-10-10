@@ -165,7 +165,7 @@ class MainActivity : AppCompatActivity() {
     // During a drag, update the audio engine at display-frame cadence but do
     // not write SharedPreferences 60 times per second. Persistence is debounced.
     private fun dispatchRealtimeStateUpdate() {
-        eqService?.updateState(currentState)
+        eqService?.updateState(currentState, persist = false)
         mainHandler.removeCallbacks(persistStateRunnable)
         mainHandler.postDelayed(persistStateRunnable, 250L)
     }
@@ -174,7 +174,7 @@ class MainActivity : AppCompatActivity() {
     private fun dispatchStateUpdate() {
         mainHandler.removeCallbacks(persistStateRunnable)
         prefsManager.saveCurrentState(currentState)
-        eqService?.updateState(currentState)
+        eqService?.updateState(currentState, persist = false)
     }
 
     private fun updateUiFromState(state: EqState32WithMDRC) {
@@ -183,7 +183,7 @@ class MainActivity : AppCompatActivity() {
         binding.knobMid.setValue(state.toneGains[1])
         binding.knobTreble.setValue(state.toneGains[2])
         binding.eqGraphView.updateCurve(state)
-        slidersAdapter.notifyDataSetChanged()
+        slidersAdapter.updateGains(state.fixedGains)
         binding.mdrcView.setState(state)
     }
 
