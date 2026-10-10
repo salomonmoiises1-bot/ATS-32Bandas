@@ -23,6 +23,11 @@ class EqPreferencesManager(context: Context) {
         private const val KEY_BASS_BOOST_HZ = "bass_boost_hz"
         private const val KEY_PREAMP = "preamp_db"
         private const val KEY_SMOOTH = "smooth_curve"
+        private const val KEY_DYN_BASS = "dynamic_bass"
+        private const val KEY_LIM_THR = "limiter_threshold_db"
+        private const val KEY_LIM_REL = "limiter_release_ms"
+        private const val KEY_AUTO_HEAD = "auto_headroom"
+        private const val KEY_BASS_DETAIL = "bass_detail"
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -42,6 +47,11 @@ class EqPreferencesManager(context: Context) {
             putFloat(KEY_BASS_BOOST_HZ, state.bassBoostHz)
             putFloat(KEY_PREAMP, state.preampDb)
             putBoolean(KEY_SMOOTH, state.smoothCurve)
+            putBoolean(KEY_DYN_BASS, state.dynamicBass)
+            putFloat(KEY_LIM_THR, state.limiterThresholdDb)
+            putFloat(KEY_LIM_REL, state.limiterReleaseMs)
+            putBoolean(KEY_AUTO_HEAD, state.autoHeadroom)
+            putBoolean(KEY_BASS_DETAIL, state.bassDetail)
             apply()
         }
     }
@@ -77,7 +87,14 @@ class EqPreferencesManager(context: Context) {
             bassBoostDb = bassBoost,
             bassBoostHz = bassBoostHz,
             preampDb = preamp,
-            smoothCurve = prefs.getBoolean(KEY_SMOOTH, false)
+            smoothCurve = prefs.getBoolean(KEY_SMOOTH, false),
+            dynamicBass = prefs.getBoolean(KEY_DYN_BASS, false),
+            limiterThresholdDb = prefs.getFloat(KEY_LIM_THR, -0.5f)
+                .let { if (it.isFinite()) it.coerceIn(EqState32WithMDRC.LIMITER_MIN_DB, EqState32WithMDRC.LIMITER_MAX_DB) else -0.5f },
+            limiterReleaseMs = prefs.getFloat(KEY_LIM_REL, 50f)
+                .let { if (it.isFinite()) it.coerceIn(EqState32WithMDRC.LIMITER_RELEASE_MIN_MS, EqState32WithMDRC.LIMITER_RELEASE_MAX_MS) else 50f },
+            autoHeadroom = prefs.getBoolean(KEY_AUTO_HEAD, false),
+            bassDetail = prefs.getBoolean(KEY_BASS_DETAIL, false)
         )
     }
 

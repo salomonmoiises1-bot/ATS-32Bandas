@@ -73,6 +73,9 @@ class PresetStore(context: Context) {
         put("boostDb", s.bassBoostDb.toDouble()); put("boostHz", s.bassBoostHz.toDouble())
         put("preamp", s.preampDb.toDouble())
         put("smooth", s.smoothCurve)
+        put("dynBass", s.dynamicBass)
+        put("limThr", s.limiterThresholdDb.toDouble()); put("limRel", s.limiterReleaseMs.toDouble())
+        put("autoHead", s.autoHeadroom)
         put("mdrcOn", s.mdrcEnabled)
         put("thr", arr(s.mdrcThreshold)); put("ratio", arr(s.mdrcRatio))
         put("atk", arr(s.mdrcAttack)); put("rel", arr(s.mdrcRelease)); put("mk", arr(s.mdrcMakeup))
@@ -86,6 +89,10 @@ class PresetStore(context: Context) {
             EqState32WithMDRC.BASS_BOOST_MIN_HZ, EqState32WithMDRC.BASS_BOOST_MAX_HZ),
         preampDb = scalar(o, "preamp", 0f, EqState32WithMDRC.PREAMP_MIN_DB, EqState32WithMDRC.PREAMP_MAX_DB),
         smoothCurve = o.optBoolean("smooth", false),
+        dynamicBass = o.optBoolean("dynBass", false),
+        limiterThresholdDb = scalar(o, "limThr", -0.5f, EqState32WithMDRC.LIMITER_MIN_DB, EqState32WithMDRC.LIMITER_MAX_DB),
+        limiterReleaseMs = scalar(o, "limRel", 50f, EqState32WithMDRC.LIMITER_RELEASE_MIN_MS, EqState32WithMDRC.LIMITER_RELEASE_MAX_MS),
+        autoHeadroom = o.optBoolean("autoHead", false),
         mdrcEnabled = o.optBoolean("mdrcOn", false),
         mdrcThreshold = floats(o, "thr", 4, -20f, -40f, 0f),
         mdrcRatio = floats(o, "ratio", 4, 2f, 1f, 20f),
