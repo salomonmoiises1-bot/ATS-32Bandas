@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.view.Choreographer
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -30,9 +32,13 @@ class MainActivity : AppCompatActivity() {
 
     // Choreographer 16ms frame-rate limiter to debounce high-frequency touch updates
     private var isFrameScheduled = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val persistStateRunnable = Runnable {
+        prefsManager.saveCurrentState(currentState)
+    }
     private val frameCallback = Choreographer.FrameCallback {
         isFrameScheduled = false
-        dispatchStateUpdate()
+        dispatchRealtimeStateUpdate()
     }
 
     private val serviceConnection = object : ServiceConnection {
@@ -135,6 +141,7 @@ class MainActivity : AppCompatActivity() {
             layoutManager = LinearLayoutManager(this@MainActivity, LinearLayoutManager.HORIZONTAL, false)
             adapter = slidersAdapter
             setHasFixedSize(true)
+            isNestedScrollingEnabled = false
             itemAnimator = null // eliminate jank on rapid slide
         }
     }
@@ -155,7 +162,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // During a drag, update the audio engine at display-frame cadence but do
+    // not write SharedPreferences 60 times per second. Persistence is debounced.
+    private fun dispatchRealtimeStateUpdate() {
+        eqService?.updateState(currentState)
+        mainHandler.removeCallbacks(persistStateRunnable)
+        mainHandler.postDelayed(persistStateRunnable, 250L)
+    }
+
+    // Used for explicit actions (preset, reset) where an immediate save is desired.
     private fun dispatchStateUpdate() {
+        mainHandler.removeCallbacks(persistStateRunnable)
         prefsManager.saveCurrentState(currentState)
         eqService?.updateState(currentState)
     }
@@ -278,7 +295,15 @@ class MainActivity : AppCompatActivity() {
         dispatchStateUpdate()
     }
 
+    override fun onPause() {
+        // Flush the final drag value if the activity is backgrounded immediately.
+        mainHandler.removeCallbacks(persistStateRunnable)
+        if (::prefsManager.isInitialized) prefsManager.saveCurrentState(currentState)
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        mainHandler.removeCallbacks(persistStateRunnable)
         super.onDestroy()
         if (isBound) {
             unbindService(serviceConnection)
