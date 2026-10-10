@@ -18,7 +18,8 @@ data class EqState32WithMDRC(
     val isEnabled: Boolean = true,
     val bassBoostDb: Float = 0f, // dB: 0 to 12, low-shelf biquad (same pipeline as tone)
     val bassBoostHz: Float = BASS_BOOST_HZ.toFloat(), // 30 to 200 Hz shelf frequency
-    val preampDb: Float = 0f // -12 to +12 dB input gain ahead of the EQ
+    val preampDb: Float = 0f, // -12 to +12 dB input gain ahead of the EQ
+    val smoothCurve: Boolean = false // true: sliders are interpolated (no bell summation); false: classic 32 summed bells
 ) {
     companion object {
         // Custom 32-point logarithmic layout spanning 20 Hz to 20,000 Hz (not the ISO 31-band 1/3-octave centre table).
@@ -45,13 +46,13 @@ data class EqState32WithMDRC(
      * The live Android backend converts this combined response into exactly 32
      * physical Pre-EQ bands; these 35 curve components are not 35 DSP bands.
      */
-    fun toBiquads(fs: Int = 48000): List<BiquadConfig> {
+    fun toBiquads(fs: Int = 48000, includeBands: Boolean = true): List<BiquadConfig> {
         val list = mutableListOf<BiquadConfig>()
         if (bassBoostDb != 0f) list.add(BiquadConfig.LowShelf(bassBoostHz.toDouble(), bassBoostDb, 1.0))
         if (toneGains.getOrElse(0) { 0f } != 0f) list.add(BiquadConfig.LowShelf(100.0, toneGains[0], 1.0))
         if (toneGains.getOrElse(1) { 0f } != 0f) list.add(BiquadConfig.Peaking(1000.0, 0.707, toneGains[1]))
         if (toneGains.getOrElse(2) { 0f } != 0f) list.add(BiquadConfig.HighShelf(8000.0, toneGains[2], 1.0))
-        FREQS.forEachIndexed { i, f -> list.add(BiquadConfig.Peaking(f, Q, fixedGains.getOrElse(i) { 0f })) }
+        if (includeBands) FREQS.forEachIndexed { i, f -> list.add(BiquadConfig.Peaking(f, Q, fixedGains.getOrElse(i) { 0f })) }
         return list
     }
 
@@ -80,6 +81,7 @@ data class EqState32WithMDRC(
         if (bassBoostDb != other.bassBoostDb) return false
         if (bassBoostHz != other.bassBoostHz) return false
         if (preampDb != other.preampDb) return false
+        if (smoothCurve != other.smoothCurve) return false
         return true
     }
 
@@ -96,6 +98,7 @@ data class EqState32WithMDRC(
         result = 31 * result + bassBoostDb.hashCode()
         result = 31 * result + bassBoostHz.hashCode()
         result = 31 * result + preampDb.hashCode()
+        result = 31 * result + smoothCurve.hashCode()
         return result
     }
 }
