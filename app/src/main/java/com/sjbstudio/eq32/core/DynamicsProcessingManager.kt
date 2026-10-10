@@ -103,8 +103,11 @@ class DynamicsProcessingManager {
                         state.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f),
                         state.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f),
                         state.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-60f, 0f),
-                        0f, 0f, 0f, 0f,
-                        state.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f)
+                        0f,      // kneeWidth: hard knee
+                        -90f,    // noiseGateThreshold: effectively disabled for normal audio
+                        1f,      // expanderRatio: neutral; 0 is invalid/unsafe
+                        0f,      // preGain dB
+                        state.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f) // postGain dB
                     )
                 )
             }
