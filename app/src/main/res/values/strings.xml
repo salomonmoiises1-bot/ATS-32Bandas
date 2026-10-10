@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">SJBStudio EQ32</string>
     <string name="tile_label">SJBStudio EQ</string>
-    <string name="desc_eq">32-Band Audio Equalizer &amp; MDRC Dynamic Processor</string>
+    <string name="desc_eq">Ecualizador de audio de 32 bandas y procesador dinámico MDRC</string>
 </resources>
