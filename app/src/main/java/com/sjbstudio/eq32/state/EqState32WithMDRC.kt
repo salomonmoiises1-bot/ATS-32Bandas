@@ -15,7 +15,8 @@ data class EqState32WithMDRC(
     val mdrcAttack: FloatArray = FloatArray(4) { 20f },    // ms: 1 to 100
     val mdrcRelease: FloatArray = FloatArray(4) { 200f },  // ms: 10 to 500
     val mdrcMakeup: FloatArray = FloatArray(4) { 0f },     // dB: 0 to 18
-    val isEnabled: Boolean = true
+    val isEnabled: Boolean = true,
+    val bassBoostDb: Float = 0f // dB: 0 to 12, low-shelf biquad @ BASS_BOOST_HZ (same pipeline as tone)
 ) {
     companion object {
         // Custom 32-point logarithmic layout spanning 20 Hz to 20,000 Hz (not the ISO 31-band 1/3-octave centre table).
@@ -26,6 +27,8 @@ data class EqState32WithMDRC(
             16005.0, 20000.0
         )
         const val Q = 4.318
+        const val BASS_BOOST_HZ = 60.0
+        const val BASS_BOOST_MAX_DB = 12f
 
         // MDRC Band Split Crossover Frequencies (4 bands)
         val MDRC_SPLITS = doubleArrayOf(120.0, 1000.0, 6000.0)
@@ -38,12 +41,21 @@ data class EqState32WithMDRC(
      */
     fun toBiquads(fs: Int = 48000): List<BiquadConfig> {
         val list = mutableListOf<BiquadConfig>()
+        if (bassBoostDb != 0f) list.add(BiquadConfig.LowShelf(BASS_BOOST_HZ, bassBoostDb, 1.0))
         if (toneGains.getOrElse(0) { 0f } != 0f) list.add(BiquadConfig.LowShelf(100.0, toneGains[0], 1.0))
         if (toneGains.getOrElse(1) { 0f } != 0f) list.add(BiquadConfig.Peaking(1000.0, 0.707, toneGains[1]))
         if (toneGains.getOrElse(2) { 0f } != 0f) list.add(BiquadConfig.HighShelf(8000.0, toneGains[2], 1.0))
         FREQS.forEachIndexed { i, f -> list.add(BiquadConfig.Peaking(f, Q, fixedGains.getOrElse(i) { 0f })) }
         return list
     }
+
+    /** Independent copy (arrays included) so the UI and the service never share mutable arrays. */
+    fun deepCopy(): EqState32WithMDRC = copy(
+        fixedGains = fixedGains.copyOf(), toneGains = toneGains.copyOf(),
+        mdrcThreshold = mdrcThreshold.copyOf(), mdrcRatio = mdrcRatio.copyOf(),
+        mdrcAttack = mdrcAttack.copyOf(), mdrcRelease = mdrcRelease.copyOf(),
+        mdrcMakeup = mdrcMakeup.copyOf()
+    )
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -59,6 +71,7 @@ data class EqState32WithMDRC(
         if (!mdrcRelease.contentEquals(other.mdrcRelease)) return false
         if (!mdrcMakeup.contentEquals(other.mdrcMakeup)) return false
         if (isEnabled != other.isEnabled) return false
+        if (bassBoostDb != other.bassBoostDb) return false
         return true
     }
 
@@ -72,6 +85,7 @@ data class EqState32WithMDRC(
         result = 31 * result + mdrcRelease.contentHashCode()
         result = 31 * result + mdrcMakeup.contentHashCode()
         result = 31 * result + isEnabled.hashCode()
+        result = 31 * result + bassBoostDb.hashCode()
         return result
     }
 }
