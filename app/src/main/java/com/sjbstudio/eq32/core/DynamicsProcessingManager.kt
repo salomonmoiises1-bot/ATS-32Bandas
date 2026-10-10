@@ -28,7 +28,16 @@ class DynamicsProcessingManager {
         private const val MDRC_BANDS = 4
         private const val EQ_BAND_Q = 4.318
         private const val TONE_Q = 0.707
-        private const val DP_FRAME_DURATION_MS = 80f
+        private const val FRAME_MS_NORMAL = 80f
+        // "Detailed bass" mode: a longer frame halves the FFT bin width (finer low-frequency resolution)
+        // at the cost of more latency. The system may round the preferred value.
+        private const val FRAME_MS_DETAIL = 160f
+        private const val MIN_INPUT_GAIN_DB = -24f
+        // Dynamic bass: MBC band 1 (<120 Hz) compresses boosted bass peaks.
+        private const val DYN_BASS_THRESHOLD_DB = -22f
+        private const val DYN_BASS_RATIO = 3f
+        private const val DYN_BASS_ATTACK_MS = 10f
+        private const val DYN_BASS_RELEASE_MS = 180f
         private const val MIN_EQ_WRITE_SPACING_MS = 16L
         private const val MIN_CUTOFF_HZ = 20f
         private const val MAX_CUTOFF_HZ = 22000f
@@ -39,6 +48,8 @@ class DynamicsProcessingManager {
     private var isEffectEnabled: Boolean = false
     private var lastMdrcEnabled: Boolean? = null
     private var lastPreampDb: Float? = null
+    private var lastBassDetail: Boolean? = null
+    private var lastLimiter: Pair<Float, Float>? = null
     private var lastAppliedState: EqState32WithMDRC? = null
     // Cache of what is currently written in the effect, so only changed EQ bands are sent.
     @Volatile private var effectGeneration = 0
@@ -73,11 +84,13 @@ class DynamicsProcessingManager {
             applyPreamp(dp, stableState.preampDb)
             dynamicsProcessing = dp
             isEffectEnabled = stableState.isEnabled
-            lastMdrcEnabled = stableState.mdrcEnabled
+            lastMdrcEnabled = mbcActive(stableState)
             lastMdrcSnapshot = mdrcSnapshot(stableState)
+            lastBassDetail = stableState.bassDetail
+            lastLimiter = limiterOf(stableState)
             lastAppliedState = null
             ParametricToDpConverter.deviceSampleRateHz = currentSampleRate().toFloat()
-            ParametricToDpConverter.frameDurationMs = DP_FRAME_DURATION_MS
+            ParametricToDpConverter.frameDurationMs = frameMs(stableState)
             ParametricToDpConverter.layoutFrozen = true
             scheduleEqWrite(stableState)
             Log.i(TAG, "Attached EQ32 DSP to session=$sessionId (32 graphic bands + 4-band MDRC + limiter)")
@@ -107,7 +120,8 @@ class DynamicsProcessingManager {
         // The MBC stage is ALWAYS part of the effect (bands configured from the saved values) and only its
         // "enabled" flag follows the MDRC switch. Toggling MDRC at runtime then never rebuilds the effect,
         // which is what used to cause a short click/noise.
-        val mbc = Mbc(true, state.mdrcEnabled, MDRC_BANDS)
+        val snap = mdrcSnapshot(state)
+        val mbc = Mbc(true, mbcActive(state), MDRC_BANDS)
         run {
             val nyquistSafe = (currentSampleRate() * 0.45f).coerceAtLeast(20f)
             val mdrcSource = floatArrayOf(120f, 1000f, 6000f, 20000f)
@@ -122,21 +136,22 @@ class DynamicsProcessingManager {
                     MbcBand(
                         true,
                         cutoffs[band],
-                        state.mdrcAttack.getOrElse(band) { 20f }.coerceIn(1f, 100f),
-                        state.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f),
-                        state.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f),
-                        state.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-40f, 0f),
+                        snap.attack[band],
+                        snap.release[band],
+                        snap.ratio[band],
+                        snap.threshold[band],
                         0f,      // kneeWidth: hard knee
                         -90f,    // noiseGateThreshold: effectively disabled for normal audio
                         1f,      // expanderRatio: neutral; 0 is invalid/unsafe
                         0f,      // preGain dB
-                        state.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f) // postGain dB
+                        snap.makeup[band] // postGain dB
                     )
                 )
             }
         }
 
-        val limiter = Limiter(true, true, 0, 1f, 50f, 20f, -0.5f, 0f)
+        val (limiterThreshold, limiterRelease) = limiterOf(state)
+        val limiter = Limiter(true, true, 0, 1f, limiterRelease, 20f, limiterThreshold, 0f)
         val builder = Config.Builder(
             DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
             2,
@@ -145,7 +160,7 @@ class DynamicsProcessingManager {
             false, 0,
             true
         )
-        builder.setPreferredFrameDuration(DP_FRAME_DURATION_MS)
+        builder.setPreferredFrameDuration(frameMs(state))
         val config = builder.build()
         for (channel in 0 until 2) {
             config.setPreEqByChannelIndex(channel, preEq)
@@ -162,6 +177,11 @@ class DynamicsProcessingManager {
         val dp = dynamicsProcessing ?: return
         // Periodic refreshes (e.g. every 5 s) with an unchanged state must not rewrite anything.
         if (stableState == lastAppliedState && !eqDirty) return
+        // A different processing frame needs a new effect (rare, user-triggered; brief gap is expected).
+        if (lastBassDetail != null && lastBassDetail != stableState.bassDetail) {
+            attachToSession(currentSessionId, stableState)
+            return
+        }
         try {
             if (isEffectEnabled != stableState.isEnabled) {
                 dp.enabled = stableState.isEnabled
@@ -172,7 +192,9 @@ class DynamicsProcessingManager {
                 return
             }
 
-            applyPreamp(dp, stableState.preampDb)
+            // With auto headroom the worker sets the input gain once it knows the strongest boost.
+            if (!stableState.autoHeadroom) applyPreamp(dp, stableState.preampDb)
+            applyLimiter(dp, stableState)
             scheduleEqWrite(stableState)
 
             // MBC parameters first (only when they changed), then the enable flag, so the compressor
@@ -182,23 +204,24 @@ class DynamicsProcessingManager {
                 for (channel in 0 until dp.channelCount) {
                     for (band in 0 until MDRC_BANDS) {
                         val nativeBand = dp.getMbcBandByChannelIndex(channel, band)
-                        nativeBand.threshold = stableState.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-40f, 0f)
-                        nativeBand.ratio = stableState.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f)
-                        nativeBand.attackTime = stableState.mdrcAttack.getOrElse(band) { 20f }.coerceIn(1f, 100f)
-                        nativeBand.releaseTime = stableState.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f)
-                        nativeBand.postGain = stableState.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f)
+                        nativeBand.threshold = snapshot.threshold[band]
+                        nativeBand.ratio = snapshot.ratio[band]
+                        nativeBand.attackTime = snapshot.attack[band]
+                        nativeBand.releaseTime = snapshot.release[band]
+                        nativeBand.postGain = snapshot.makeup[band]
                         dp.setMbcBandByChannelIndex(channel, band, nativeBand)
                     }
                 }
                 lastMdrcSnapshot = snapshot
             }
-            if (lastMdrcEnabled != stableState.mdrcEnabled) {
+            val mbcOn = mbcActive(stableState)
+            if (lastMdrcEnabled != mbcOn) {
                 for (channel in 0 until dp.channelCount) {
                     val mbc = dp.getMbcByChannelIndex(channel)
-                    mbc.isEnabled = stableState.mdrcEnabled
+                    mbc.isEnabled = mbcOn
                     dp.setMbcByChannelIndex(channel, mbc)
                 }
-                lastMdrcEnabled = stableState.mdrcEnabled
+                lastMdrcEnabled = mbcOn
             }
             lastAppliedState = stableState
         } catch (e: Exception) {
@@ -260,7 +283,7 @@ class DynamicsProcessingManager {
                 }
                 eq.isEnabled = latest.isEnabled
                 ParametricToDpConverter.deviceSampleRateHz = sampleRate.toFloat()
-                ParametricToDpConverter.frameDurationMs = DP_FRAME_DURATION_MS
+                ParametricToDpConverter.frameDurationMs = frameMs(latest)
                 ParametricToDpConverter.layoutFrozen = true
                 val smooth = if (latest.smoothCurve) {
                     SmoothCurve(FloatArray(EqState32WithMDRC.FREQS.size) { latest.fixedGains.getOrElse(it) { 0f }.coerceIn(-15f, 15f) })
@@ -273,6 +296,15 @@ class DynamicsProcessingManager {
                 val cutoffs = FloatArray(REQUESTED_EQ_BANDS) { converted.cutoffs[it].coerceIn(MIN_CUTOFF_HZ, MAX_CUTOFF_HZ) }
                 val gains = FloatArray(REQUESTED_EQ_BANDS) {
                     if (latest.isEnabled) converted.gains[it].coerceIn(-15f, 15f) else 0f
+                }
+                if (latest.autoHeadroom) {
+                    // Auto headroom: lower the input gain by the strongest boost actually applied.
+                    val peak = (gains.maxOrNull() ?: 0f).coerceAtLeast(0f)
+                    synchronized(this@DynamicsProcessingManager) {
+                        if (generationAtStart == effectGeneration && dynamicsProcessing === dp) {
+                            applyPreamp(dp, latest.preampDb - peak)
+                        }
+                    }
                 }
                 val prevCutoffs = writtenCutoffs
                 val prevGains = writtenGains
@@ -325,7 +357,7 @@ class DynamicsProcessingManager {
 
     /** Preamp = DynamicsProcessing input gain (dB), applied ahead of the EQ on every channel. */
     private fun applyPreamp(dp: DynamicsProcessing, preampDb: Float) {
-        val value = preampDb.coerceIn(EqState32WithMDRC.PREAMP_MIN_DB, EqState32WithMDRC.PREAMP_MAX_DB)
+        val value = preampDb.coerceIn(MIN_INPUT_GAIN_DB, EqState32WithMDRC.PREAMP_MAX_DB)
         if (lastPreampDb == value) return
         try {
             dp.setInputGainAllChannelsTo(value)
@@ -335,10 +367,48 @@ class DynamicsProcessingManager {
         }
     }
 
-    private fun mdrcSnapshot(state: EqState32WithMDRC) = MdrcSnapshot(
-        state.mdrcThreshold.toList(), state.mdrcRatio.toList(), state.mdrcAttack.toList(),
-        state.mdrcRelease.toList(), state.mdrcMakeup.toList()
+    private fun frameMs(state: EqState32WithMDRC): Float = if (state.bassDetail) FRAME_MS_DETAIL else FRAME_MS_NORMAL
+
+    /** The MBC stage runs when the user enabled MDRC OR the dynamic-bass stage needs it. */
+    private fun mbcActive(state: EqState32WithMDRC): Boolean = state.mdrcEnabled || state.dynamicBass
+
+    private fun limiterOf(state: EqState32WithMDRC): Pair<Float, Float> = Pair(
+        state.limiterThresholdDb.coerceIn(EqState32WithMDRC.LIMITER_MIN_DB, EqState32WithMDRC.LIMITER_MAX_DB),
+        state.limiterReleaseMs.coerceIn(EqState32WithMDRC.LIMITER_RELEASE_MIN_MS, EqState32WithMDRC.LIMITER_RELEASE_MAX_MS)
     )
+
+    private fun applyLimiter(dp: DynamicsProcessing, state: EqState32WithMDRC) {
+        val wanted = limiterOf(state)
+        if (wanted == lastLimiter) return
+        for (channel in 0 until dp.channelCount) {
+            val limiter = dp.getLimiterByChannelIndex(channel)
+            limiter.threshold = wanted.first
+            limiter.releaseTime = wanted.second
+            dp.setLimiterByChannelIndex(channel, limiter)
+        }
+        lastLimiter = wanted
+    }
+
+    /**
+     * Effective MBC parameters. With MDRC off the bands are neutral (ratio 1:1, no makeup); with dynamic
+     * bass on, band 1 (<120 Hz) gets a bass-tamer setting on top of whatever MDRC says.
+     */
+    private fun mdrcSnapshot(state: EqState32WithMDRC): MdrcSnapshot {
+        val on = state.mdrcEnabled
+        val threshold = FloatArray(MDRC_BANDS) { if (on) state.mdrcThreshold.getOrElse(it) { -20f }.coerceIn(-40f, 0f) else 0f }
+        val ratio = FloatArray(MDRC_BANDS) { if (on) state.mdrcRatio.getOrElse(it) { 2f }.coerceIn(1f, 20f) else 1f }
+        val attack = FloatArray(MDRC_BANDS) { if (on) state.mdrcAttack.getOrElse(it) { 20f }.coerceIn(1f, 100f) else 20f }
+        val release = FloatArray(MDRC_BANDS) { if (on) state.mdrcRelease.getOrElse(it) { 200f }.coerceIn(10f, 500f) else 200f }
+        val makeup = FloatArray(MDRC_BANDS) { if (on) state.mdrcMakeup.getOrElse(it) { 0f }.coerceIn(0f, 18f) else 0f }
+        if (state.dynamicBass) {
+            threshold[0] = DYN_BASS_THRESHOLD_DB
+            ratio[0] = DYN_BASS_RATIO
+            attack[0] = DYN_BASS_ATTACK_MS
+            release[0] = DYN_BASS_RELEASE_MS
+            makeup[0] = 0f
+        }
+        return MdrcSnapshot(threshold.toList(), ratio.toList(), attack.toList(), release.toList(), makeup.toList())
+    }
 
     private fun snapshotState(state: EqState32WithMDRC): EqState32WithMDRC = state.copy(
         fixedGains = state.fixedGains.copyOf(),
@@ -386,6 +456,8 @@ class DynamicsProcessingManager {
             lastMdrcEnabled = null
             lastMdrcSnapshot = null
             lastPreampDb = null
+            lastBassDetail = null
+            lastLimiter = null
             lastAppliedState = null
             writtenCutoffs = null; writtenGains = null; writtenEnabled = null; cacheGeneration = -1
             isEffectEnabled = false
