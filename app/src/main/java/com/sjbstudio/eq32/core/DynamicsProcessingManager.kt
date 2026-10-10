@@ -38,6 +38,11 @@ class DynamicsProcessingManager {
     private var currentSessionId: Int = 0
     private var isEffectEnabled: Boolean = false
     private var lastMdrcEnabled: Boolean? = null
+    private data class MdrcSnapshot(
+        val threshold: List<Float>, val ratio: List<Float>, val attack: List<Float>,
+        val release: List<Float>, val makeup: List<Float>
+    )
+    private var lastMdrcSnapshot: MdrcSnapshot? = null
     @Volatile private var latestState: EqState32WithMDRC = EqState32WithMDRC()
     @Volatile private var pendingEqWrite: Runnable? = null
     @Volatile private var eqWriteRevision: Long = 0L
@@ -47,20 +52,22 @@ class DynamicsProcessingManager {
 
     @Synchronized
     fun attachToSession(sessionId: Int, state: EqState32WithMDRC): Boolean {
-        latestState = state
+        val stableState = snapshotState(state)
+        latestState = stableState
         releaseEffect()
         currentSessionId = sessionId
         return try {
-            val config = buildDynamicsConfig(state)
+            val config = buildDynamicsConfig(stableState)
             val dp = DynamicsProcessing(0, sessionId, config)
-            dp.enabled = state.isEnabled
+            dp.enabled = stableState.isEnabled
             dynamicsProcessing = dp
-            isEffectEnabled = state.isEnabled
-            lastMdrcEnabled = state.mdrcEnabled
+            isEffectEnabled = stableState.isEnabled
+            lastMdrcEnabled = stableState.mdrcEnabled
+            lastMdrcSnapshot = if (stableState.mdrcEnabled) mdrcSnapshot(stableState) else null
             ParametricToDpConverter.deviceSampleRateHz = currentSampleRate().toFloat()
             ParametricToDpConverter.frameDurationMs = DP_FRAME_DURATION_MS
             ParametricToDpConverter.layoutFrozen = true
-            scheduleEqWrite(state)
+            scheduleEqWrite(stableState)
             Log.i(TAG, "Attached EQ32 DSP to session=$sessionId (32 graphic bands + 4-band MDRC + limiter)")
             true
         } catch (e: Exception) {
@@ -103,7 +110,7 @@ class DynamicsProcessingManager {
                         state.mdrcAttack.getOrElse(band) { 20f }.coerceIn(1f, 100f),
                         state.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f),
                         state.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f),
-                        state.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-60f, 0f),
+                        state.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-40f, 0f),
                         0f,      // kneeWidth: hard knee
                         -90f,    // noiseGateThreshold: effectively disabled for normal audio
                         1f,      // expanderRatio: neutral; 0 is invalid/unsafe
@@ -135,40 +142,47 @@ class DynamicsProcessingManager {
 
     @Synchronized
     fun applyState(state: EqState32WithMDRC) {
-        latestState = state
+        val stableState = snapshotState(state)
+        latestState = stableState
         val dp = dynamicsProcessing ?: return
         try {
-            if (lastMdrcEnabled != null && lastMdrcEnabled != state.mdrcEnabled) {
-                attachToSession(currentSessionId, state)
+            if (lastMdrcEnabled != null && lastMdrcEnabled != stableState.mdrcEnabled) {
+                attachToSession(currentSessionId, stableState)
                 return
             }
-            dp.enabled = state.isEnabled
-            isEffectEnabled = state.isEnabled
-            if (!state.isEnabled) return
-            scheduleEqWrite(state)
-            for (channel in 0 until dp.channelCount) {
-                if (state.mdrcEnabled) {
+            if (isEffectEnabled != stableState.isEnabled) {
+                dp.enabled = stableState.isEnabled
+                isEffectEnabled = stableState.isEnabled
+            }
+            if (!stableState.isEnabled) return
+
+            scheduleEqWrite(stableState)
+            val mdrcSnapshot = if (stableState.mdrcEnabled) mdrcSnapshot(stableState) else null
+            // EQ fader drags must not rewrite all MBC parameters on every frame.
+            if (mdrcSnapshot != null && mdrcSnapshot != lastMdrcSnapshot) {
+                for (channel in 0 until dp.channelCount) {
                     for (band in 0 until MDRC_BANDS) {
                         val nativeBand = dp.getMbcBandByChannelIndex(channel, band)
-                        nativeBand.threshold = state.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-60f, 0f)
-                        nativeBand.ratio = state.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f)
-                        nativeBand.attackTime = state.mdrcAttack.getOrElse(band) { 20f }.coerceIn(1f, 100f)
-                        nativeBand.releaseTime = state.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f)
-                        nativeBand.postGain = state.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f)
+                        nativeBand.threshold = stableState.mdrcThreshold.getOrElse(band) { -20f }.coerceIn(-40f, 0f)
+                        nativeBand.ratio = stableState.mdrcRatio.getOrElse(band) { 2f }.coerceIn(1f, 20f)
+                        nativeBand.attackTime = stableState.mdrcAttack.getOrElse(band) { 20f }.coerceIn(1f, 100f)
+                        nativeBand.releaseTime = stableState.mdrcRelease.getOrElse(band) { 200f }.coerceIn(10f, 500f)
+                        nativeBand.postGain = stableState.mdrcMakeup.getOrElse(band) { 0f }.coerceIn(0f, 18f)
                         dp.setMbcBandByChannelIndex(channel, band, nativeBand)
                     }
                 }
+                lastMdrcSnapshot = mdrcSnapshot
             }
         } catch (e: Exception) {
             Log.w(TAG, "Realtime update failed; rebuilding session config", e)
-            attachToSession(currentSessionId, state)
+            attachToSession(currentSessionId, stableState)
         }
     }
 
     private fun scheduleEqWrite(state: EqState32WithMDRC) {
         // Coalesce rapid slider updates without cancelling the queued DSP write.
-        // Cancelling/reposting on every touch frame can starve the EQ32 stage.
-        latestState = state
+        // Snapshot mutable arrays before the worker reads them.
+        latestState = snapshotState(state)
         eqWriteRevision++
         if (pendingEqWrite != null) return
         val job = Runnable {
@@ -244,6 +258,21 @@ class DynamicsProcessingManager {
         eqWorker.postDelayed(job, delay)
     }
 
+    private fun mdrcSnapshot(state: EqState32WithMDRC) = MdrcSnapshot(
+        state.mdrcThreshold.toList(), state.mdrcRatio.toList(), state.mdrcAttack.toList(),
+        state.mdrcRelease.toList(), state.mdrcMakeup.toList()
+    )
+
+    private fun snapshotState(state: EqState32WithMDRC): EqState32WithMDRC = state.copy(
+        fixedGains = state.fixedGains.copyOf(),
+        toneGains = state.toneGains.copyOf(),
+        mdrcThreshold = state.mdrcThreshold.copyOf(),
+        mdrcRatio = state.mdrcRatio.copyOf(),
+        mdrcAttack = state.mdrcAttack.copyOf(),
+        mdrcRelease = state.mdrcRelease.copyOf(),
+        mdrcMakeup = state.mdrcMakeup.copyOf()
+    )
+
     private fun currentSampleRate(): Int = try {
         AudioTrack.getNativeOutputSampleRate(AudioManager.STREAM_MUSIC).coerceIn(8000, 192000)
     } catch (_: Exception) {
@@ -278,6 +307,7 @@ class DynamicsProcessingManager {
         } finally {
             dynamicsProcessing = null
             lastMdrcEnabled = null
+            lastMdrcSnapshot = null
             isEffectEnabled = false
         }
     }
