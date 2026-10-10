@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Binder
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.Build
 import android.os.IBinder
@@ -63,6 +64,8 @@ class EqService : Service() {
     private val announcedSessions = mutableMapOf<Int, String>()
     private val detectedSessions = mutableMapOf<Int, String>()
     private val sessionHandler = Handler(Looper.getMainLooper())
+    private var recoveryThread: HandlerThread? = null
+    private var recoveryHandler: Handler? = null
     private var playbackCallbackRegistered = false
     private val playbackCallback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
@@ -75,6 +78,28 @@ class EqService : Service() {
                 refreshActiveSession()
                 sessionHandler.postDelayed(this, 2000L)
             }
+        }
+    }
+    private val sessionRecovery = object : Runnable {
+        override fun run() {
+            if (serviceDestroyed) return
+            try {
+                val recovered = AudioPolicyDumpParser.dump(applicationContext)
+                if (recovered != null) {
+                    val recoveredTargets = mutableMapOf<Int, String>()
+                    recovered.forEach { (pkg, ids) ->
+                        if (isTargetPackage(pkg)) ids.filter { it > 0 }.forEach { id -> recoveredTargets[id] = pkg }
+                    }
+                    synchronized(this@EqService) {
+                        detectedSessions.clear()
+                        detectedSessions.putAll(recoveredTargets)
+                    }
+                    sessionHandler.post { if (!serviceDestroyed) refreshActiveSession() }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Audio policy session recovery failed; retaining previously detected sessions", e)
+            }
+            recoveryHandler?.postDelayed(this, 3000L)
         }
     }
     @Volatile private var serviceDestroyed = false
@@ -95,6 +120,10 @@ class EqService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Playback callback registration unavailable", e)
         }
+        val thread = HandlerThread("ATSSessionRecovery").also { it.start() }
+        recoveryThread = thread
+        recoveryHandler = Handler(thread.looper)
+        recoveryHandler?.post(sessionRecovery)
         sessionHandler.post(sessionRefresh)
         refreshActiveSession()
     }
@@ -214,6 +243,10 @@ class EqService : Service() {
     private fun refreshActiveSession() {
         val audioManager = getSystemService(AudioManager::class.java)
         val discovered = mutableMapOf<Int, String>()
+
+        // Real session-ID recovery runs on a dedicated HandlerThread, not the main thread.
+        // Its results are merged into detectedSessions and then reconciled here.
+
         try {
             audioManager?.activePlaybackConfigurations?.forEach { config ->
                 val active = readPlaybackConfigValue(config, "isActive") as? Boolean
@@ -295,6 +328,10 @@ class EqService : Service() {
     override fun onDestroy() {
         serviceDestroyed = true
         sessionHandler.removeCallbacks(sessionRefresh)
+        recoveryHandler?.removeCallbacks(sessionRecovery)
+        recoveryThread?.quitSafely()
+        recoveryHandler = null
+        recoveryThread = null
         try {
             if (playbackCallbackRegistered) {
                 getSystemService(AudioManager::class.java)?.unregisterAudioPlaybackCallback(playbackCallback)
