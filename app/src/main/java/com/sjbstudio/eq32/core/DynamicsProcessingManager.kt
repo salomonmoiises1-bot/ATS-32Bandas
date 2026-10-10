@@ -38,6 +38,7 @@ class DynamicsProcessingManager {
     private var currentSessionId: Int = 0
     private var isEffectEnabled: Boolean = false
     private var lastMdrcEnabled: Boolean? = null
+    private var lastPreampDb: Float? = null
     private data class MdrcSnapshot(
         val threshold: List<Float>, val ratio: List<Float>, val attack: List<Float>,
         val release: List<Float>, val makeup: List<Float>
@@ -60,6 +61,7 @@ class DynamicsProcessingManager {
             val config = buildDynamicsConfig(stableState)
             val dp = DynamicsProcessing(0, sessionId, config)
             dp.enabled = stableState.isEnabled
+            applyPreamp(dp, stableState.preampDb)
             dynamicsProcessing = dp
             isEffectEnabled = stableState.isEnabled
             lastMdrcEnabled = stableState.mdrcEnabled
@@ -156,6 +158,7 @@ class DynamicsProcessingManager {
             }
             if (!stableState.isEnabled) return
 
+            applyPreamp(dp, stableState.preampDb)
             scheduleEqWrite(stableState)
             val mdrcSnapshot = if (stableState.mdrcEnabled) mdrcSnapshot(stableState) else null
             // EQ fader drags must not rewrite all MBC parameters on every frame.
@@ -214,7 +217,7 @@ class DynamicsProcessingManager {
                 }
                 if (latest.bassBoostDb != 0f) {
                     // BassBoost is just one more biquad in the same response that is folded into the 32 DP bands.
-                    eq.addBand(minOf(EqState32WithMDRC.BASS_BOOST_HZ.toFloat(), sampleRate * 0.40f),
+                    eq.addBand(minOf(latest.bassBoostHz.coerceIn(EqState32WithMDRC.BASS_BOOST_MIN_HZ, EqState32WithMDRC.BASS_BOOST_MAX_HZ), sampleRate * 0.40f),
                         latest.bassBoostDb.coerceIn(0f, EqState32WithMDRC.BASS_BOOST_MAX_DB), BiquadFilter.FilterType.LOW_SHELF, TONE_Q)
                 }
                 if (latest.toneGains.getOrElse(0) { 0f } != 0f) {
@@ -261,6 +264,18 @@ class DynamicsProcessingManager {
         pendingEqWrite = job
         val delay = (lastEqWriteMs + MIN_EQ_WRITE_SPACING_MS - SystemClock.uptimeMillis()).coerceIn(0L, MIN_EQ_WRITE_SPACING_MS)
         eqWorker.postDelayed(job, delay)
+    }
+
+    /** Preamp = DynamicsProcessing input gain (dB), applied ahead of the EQ on every channel. */
+    private fun applyPreamp(dp: DynamicsProcessing, preampDb: Float) {
+        val value = preampDb.coerceIn(EqState32WithMDRC.PREAMP_MIN_DB, EqState32WithMDRC.PREAMP_MAX_DB)
+        if (lastPreampDb == value) return
+        try {
+            dp.setInputGainAllChannelsTo(value)
+            lastPreampDb = value
+        } catch (e: Exception) {
+            Log.w(TAG, "Preamp (input gain) update failed", e)
+        }
     }
 
     private fun mdrcSnapshot(state: EqState32WithMDRC) = MdrcSnapshot(
@@ -313,6 +328,7 @@ class DynamicsProcessingManager {
             dynamicsProcessing = null
             lastMdrcEnabled = null
             lastMdrcSnapshot = null
+            lastPreampDb = null
             isEffectEnabled = false
         }
     }
