@@ -20,24 +20,36 @@
         android:background="?selectableItemBackgroundBorderless"
         android:padding="2dp" />
 
-    <!-- Vertical Slider (-12 to +12) -->
-    <com.google.android.material.slider.Slider
-        android:id="@+id/sliderVertical"
-        android:layout_width="wrap_content"
+    <!--
+        Give the Slider a real horizontal measurement before rotation.
+        Its width determines the travel distance of the thumb; wrap_content
+        made the track very short even though the item itself was tall.
+    -->
+    <FrameLayout
+        android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:rotation="270"
-        android:valueFrom="-12.0"
-        android:valueTo="12.0"
-        android:stepSize="0.1"
-        android:value="0.0"
-        app:thumbColor="@color/neon_cyan"
-        app:thumbRadius="6dp"
-        app:haloRadius="16dp"
-        app:trackHeight="4dp"
-        app:trackColorActive="@color/neon_cyan"
-        app:trackColorInactive="@color/slider_track_inactive"
-        app:haloColor="@color/halo_cyan" />
+        android:clipChildren="false"
+        android:clipToPadding="false">
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderVertical"
+            android:layout_width="240dp"
+            android:layout_height="48dp"
+            android:layout_gravity="center"
+            android:rotation="270"
+            android:valueFrom="-12.0"
+            android:valueTo="12.0"
+            android:stepSize="0.1"
+            android:value="0.0"
+            app:thumbColor="@color/neon_cyan"
+            app:thumbRadius="7dp"
+            app:haloRadius="18dp"
+            app:trackHeight="5dp"
+            app:trackColorActive="@color/neon_cyan"
+            app:trackColorInactive="@color/slider_track_inactive"
+            app:haloColor="@color/halo_cyan" />
+    </FrameLayout>
 
     <!-- Frequency indicator -->
     <TextView
