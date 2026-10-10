@@ -212,6 +212,11 @@ class DynamicsProcessingManager {
                         EQ_BAND_Q
                     )
                 }
+                if (latest.bassBoostDb != 0f) {
+                    // BassBoost is just one more biquad in the same response that is folded into the 32 DP bands.
+                    eq.addBand(minOf(EqState32WithMDRC.BASS_BOOST_HZ.toFloat(), sampleRate * 0.40f),
+                        latest.bassBoostDb.coerceIn(0f, EqState32WithMDRC.BASS_BOOST_MAX_DB), BiquadFilter.FilterType.LOW_SHELF, TONE_Q)
+                }
                 if (latest.toneGains.getOrElse(0) { 0f } != 0f) {
                     eq.addBand(minOf(100f, sampleRate * 0.40f), latest.toneGains[0].coerceIn(-12f, 12f), BiquadFilter.FilterType.LOW_SHELF, TONE_Q)
                 }

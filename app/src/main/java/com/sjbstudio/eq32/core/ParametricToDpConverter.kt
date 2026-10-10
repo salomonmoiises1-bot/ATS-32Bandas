@@ -135,9 +135,11 @@ object ParametricToDpConverter {
         while (freqs.size > total) {
             var best = -1
             var bestCost = Float.MAX_VALUE
-            for (j in 1 until freqs.size - 1) {
+            // Index 0 must be prunable too: the 5 Hz seed is not an anchor, and keeping it
+            // pushed the 20 kHz anchor out of the final 32 slots.
+            for (j in 0 until freqs.size - 1) {
                 if (anchorFlags[j]) continue
-                val cost = variation(freqs[j - 1], freqs[j + 1])
+                val cost = variation(freqs[maxOf(j - 1, 0)], freqs[j + 1])
                 if (cost < bestCost) { bestCost = cost; best = j }
             }
             if (best < 0) break
