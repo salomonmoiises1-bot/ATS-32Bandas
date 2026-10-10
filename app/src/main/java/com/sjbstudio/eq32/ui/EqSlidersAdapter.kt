@@ -7,7 +7,7 @@ import com.sjbstudio.eq32.databinding.ItemSliderBinding
 
 class EqSlidersAdapter(
     private val frequencies: DoubleArray,
-    private val gains: FloatArray,
+    private var gains: FloatArray,
     private val onGainChanged: (Int, Float) -> Unit
 ) : RecyclerView.Adapter<EqSlidersAdapter.SliderViewHolder>() {
 
@@ -67,6 +67,12 @@ class EqSlidersAdapter(
             holder.binding.tvGainVal.text = "0.0"
             onGainChanged(position, 0f)
         }
+    }
+
+    /** Replace the backing state array when MainActivity installs a new EQ state (e.g. FLAT/reset). */
+    fun updateGains(newGains: FloatArray) {
+        gains = newGains
+        notifyDataSetChanged()
     }
 
     override fun getItemCount(): Int = frequencies.size
