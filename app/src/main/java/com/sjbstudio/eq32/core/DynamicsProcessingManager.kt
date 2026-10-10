@@ -63,6 +63,17 @@ class DynamicsProcessingManager {
         val release: List<Float>, val makeup: List<Float>
     )
     private var lastMdrcSnapshot: MdrcSnapshot? = null
+    // Only the inputs that change the EQ response / input gain. Moving a limiter or MDRC slider must not
+    // re-run the whole response conversion.
+    private data class EqKey(
+        val fixed: List<Float>, val tone: List<Float>, val boostDb: Float, val boostHz: Float,
+        val smooth: Boolean, val enabled: Boolean, val autoHeadroom: Boolean, val preampDb: Float
+    )
+    private fun eqKey(s: EqState32WithMDRC) = EqKey(
+        s.fixedGains.toList(), s.toneGains.toList(), s.bassBoostDb, s.bassBoostHz,
+        s.smoothCurve, s.isEnabled, s.autoHeadroom, if (s.autoHeadroom) s.preampDb else 0f
+    )
+    @Volatile private var lastEqKey: EqKey? = null
     @Volatile private var latestState: EqState32WithMDRC = EqState32WithMDRC()
     @Volatile private var pendingEqWrite: Runnable? = null
     @Volatile private var eqWriteRevision: Long = 0L
@@ -103,17 +114,22 @@ class DynamicsProcessingManager {
         }
     }
 
+    /** The 32 logical band centres mapped into the representable sub-Nyquist range (log layout preserved). */
+    private fun safeBandFrequencies(sampleRate: Int): FloatArray {
+        val usableMaxHz = minOf(20000.0, sampleRate * 0.45).coerceAtLeast(20.0)
+        val sourceLogSpan = kotlin.math.ln(20000.0 / 20.0)
+        return FloatArray(EqState32WithMDRC.FREQS.size) { index ->
+            val sourceFrequency = EqState32WithMDRC.FREQS[index].coerceIn(20.0, 20000.0)
+            val fraction = (kotlin.math.ln(sourceFrequency / 20.0) / sourceLogSpan).coerceIn(0.0, 1.0)
+            (20.0 * kotlin.math.exp(fraction * kotlin.math.ln(usableMaxHz / 20.0))).toFloat()
+        }
+    }
+
     private fun buildDynamicsConfig(state: EqState32WithMDRC): Config {
         val bandCount = EqState32WithMDRC.FREQS.size
         require(bandCount == REQUESTED_EQ_BANDS) { "EQ32 requires exactly 32 bands" }
         val preEq = Eq(true, true, bandCount)
-        val outputRate = currentSampleRate().toDouble()
-        val usableMaxHz = minOf(20000.0, outputRate * 0.45).coerceAtLeast(20.0)
-        val sourceLogSpan = kotlin.math.ln(20000.0 / 20.0)
-        EqState32WithMDRC.FREQS.forEachIndexed { index, frequency ->
-            val sourceFrequency = frequency.coerceIn(20.0, 20000.0)
-            val fraction = (kotlin.math.ln(sourceFrequency / 20.0) / sourceLogSpan).coerceIn(0.0, 1.0)
-            val safeFrequency = (20.0 * kotlin.math.exp(fraction * kotlin.math.ln(usableMaxHz / 20.0))).toFloat()
+        safeBandFrequencies(currentSampleRate()).forEachIndexed { index, safeFrequency ->
             preEq.setBand(index, EqBand(state.isEnabled, safeFrequency, 0f))
         }
 
@@ -195,7 +211,7 @@ class DynamicsProcessingManager {
             // With auto headroom the worker sets the input gain once it knows the strongest boost.
             if (!stableState.autoHeadroom) applyPreamp(dp, stableState.preampDb)
             applyLimiter(dp, stableState)
-            scheduleEqWrite(stableState)
+            if (eqDirty || eqKey(stableState) != lastEqKey) scheduleEqWrite(stableState)
 
             // MBC parameters first (only when they changed), then the enable flag, so the compressor
             // never starts with stale values. No effect rebuild is involved.
@@ -250,16 +266,12 @@ class DynamicsProcessingManager {
                 val sampleRate = currentSampleRate()
                 val eq = ParametricEqualizer(sampleRate)
                 eq.clearBands()
-                val usableMaxHz = minOf(20000.0, sampleRate * 0.45).coerceAtLeast(20.0)
-                val sourceLogSpan = kotlin.math.ln(20000.0 / 20.0)
+                val safeFrequencies = safeBandFrequencies(sampleRate)
                 for (index in EqState32WithMDRC.FREQS.indices) {
                     // At low output rates, preserve the 32-band logarithmic layout
                     // while mapping it into the representable sub-Nyquist range.
-                    val sourceFrequency = EqState32WithMDRC.FREQS[index].coerceIn(20.0, 20000.0)
-                    val fraction = (kotlin.math.ln(sourceFrequency / 20.0) / sourceLogSpan).coerceIn(0.0, 1.0)
-                    val safeFrequency = (20.0 * kotlin.math.exp(fraction * kotlin.math.ln(usableMaxHz / 20.0))).toFloat()
                     eq.addBand(
-                        safeFrequency,
+                        safeFrequencies[index],
                         // Smooth mode: the 32 bells stay at 0 dB only as cutoff anchors; the slider
                         // values enter the target response through the interpolated curve below.
                         if (latest.smoothCurve) 0f else latest.fixedGains.getOrElse(index) { 0f }.coerceIn(-15f, 15f),
@@ -331,6 +343,7 @@ class DynamicsProcessingManager {
                     }
                 } catch (e: Exception) {
                     writtenCutoffs = null; writtenGains = null; writtenEnabled = null; cacheGeneration = -1
+                    lastEqKey = null
                     throw e
                 }
                 if (generationAtStart == effectGeneration) {
@@ -338,6 +351,7 @@ class DynamicsProcessingManager {
                     cacheGeneration = generationAtStart
                 }
                 if (eqWriteRevision == revisionAtStart) eqDirty = false
+                if (generationAtStart == effectGeneration) lastEqKey = eqKey(latest)
                 lastEqWriteMs = SystemClock.uptimeMillis()
             } catch (e: Exception) {
                 Log.e(TAG, "EQ32 response conversion/write failed for session=$currentSessionId", e)
@@ -460,6 +474,7 @@ class DynamicsProcessingManager {
             lastLimiter = null
             lastAppliedState = null
             writtenCutoffs = null; writtenGains = null; writtenEnabled = null; cacheGeneration = -1
+            lastEqKey = null
             isEffectEnabled = false
         }
     }

@@ -151,6 +151,10 @@ class ParametricEqualizer(private val sampleRate: Int = 48000) {
 
         for (i in filters.indices) {
             if (bands[i].enabled) {
+                // Bells and shelves at 0 dB have exactly unity magnitude: skip the evaluation.
+                val type = bands[i].filterType
+                if (bands[i].gain == 0f && (type == BiquadFilter.FilterType.BELL ||
+                        type == BiquadFilter.FilterType.LOW_SHELF || type == BiquadFilter.FilterType.HIGH_SHELF)) continue
                 val magnitude = filters[i].getFrequencyResponse(frequency)
                 totalMagnitude *= magnitude
             }

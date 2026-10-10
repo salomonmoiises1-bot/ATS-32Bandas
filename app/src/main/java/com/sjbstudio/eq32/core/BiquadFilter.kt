@@ -294,40 +294,19 @@ class BiquadFilter(
         x1R = 0.0; x2R = 0.0; y1R = 0.0; y2R = 0.0
     }
 
+    /**
+     * Magnitude |H(e^jw)| of the biquad. Allocation-free closed form:
+     * |b0 + b1 z^-1 + b2 z^-2|^2 = b0^2+b1^2+b2^2 + 2(b0 b1 + b1 b2) cos w + 2 b0 b2 cos 2w (same for the
+     * denominator). It is evaluated thousands of times per EQ write, so it must not create objects.
+     */
     fun getFrequencyResponse(freq: Float): Float {
         val omega = 2.0 * PI * freq / sampleRate
-        val z = Complex(cos(omega), sin(omega))
-        val zInv = z.inverse()
-        val zInv2 = zInv.times(zInv)
-
-        val numerator = Complex(b0, 0.0)
-            .plus(Complex(b1, 0.0).times(zInv))
-            .plus(Complex(b2, 0.0).times(zInv2))
-
-        val denominator = Complex(1.0, 0.0)
-            .plus(Complex(a1, 0.0).times(zInv))
-            .plus(Complex(a2, 0.0).times(zInv2))
-
-        val response = numerator.div(denominator)
-        val mag = response.magnitude().toFloat()
-
+        val c1 = cos(omega)
+        val c2 = cos(2.0 * omega)
+        val num = b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * c1 + 2.0 * b0 * b2 * c2
+        val den = 1.0 + a1 * a1 + a2 * a2 + 2.0 * (a1 + a1 * a2) * c1 + 2.0 * a2 * c2
+        if (den <= 1e-30) return 1f
+        val mag = sqrt(max(0.0, num) / den).toFloat()
         return if (mag.isNaN() || mag.isInfinite()) 1f else mag
-    }
-
-    private data class Complex(val real: Double, val imag: Double) {
-        fun plus(other: Complex) = Complex(real + other.real, imag + other.imag)
-        fun times(other: Complex) = Complex(
-            real * other.real - imag * other.imag,
-            real * other.imag + imag * other.real
-        )
-        fun div(other: Complex): Complex {
-            val denominator = other.real * other.real + other.imag * other.imag
-            return Complex(
-                (real * other.real + imag * other.imag) / denominator,
-                (imag * other.real - real * other.imag) / denominator
-            )
-        }
-        fun inverse() = Complex(real / (real * real + imag * imag), -imag / (real * real + imag * imag))
-        fun magnitude() = sqrt(real * real + imag * imag)
     }
 }
