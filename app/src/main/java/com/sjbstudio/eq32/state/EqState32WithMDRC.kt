@@ -19,7 +19,12 @@ data class EqState32WithMDRC(
     val bassBoostDb: Float = 0f, // dB: 0 to 12, low-shelf biquad (same pipeline as tone)
     val bassBoostHz: Float = BASS_BOOST_HZ.toFloat(), // 30 to 200 Hz shelf frequency
     val preampDb: Float = 0f, // -12 to +12 dB input gain ahead of the EQ
-    val smoothCurve: Boolean = false // true: sliders are interpolated (no bell summation); false: classic 32 summed bells
+    val smoothCurve: Boolean = false, // true: sliders are interpolated (no bell summation); false: classic 32 summed bells
+    val dynamicBass: Boolean = false, // bass boost that is tamed on loud peaks (MBC band 1 acts as a dynamic bass stage)
+    val limiterThresholdDb: Float = -0.5f, // output limiter threshold, -12 to 0 dB
+    val limiterReleaseMs: Float = 50f, // output limiter release, 10 to 300 ms
+    val autoHeadroom: Boolean = false, // lower the input gain automatically by the strongest boost
+    val bassDetail: Boolean = false // longer processing frame: finer bass resolution, more latency
 ) {
     companion object {
         // Custom 32-point logarithmic layout spanning 20 Hz to 20,000 Hz (not the ISO 31-band 1/3-octave centre table).
@@ -32,6 +37,10 @@ data class EqState32WithMDRC(
         const val Q = 4.318
         const val BASS_BOOST_HZ = 60.0
         const val BASS_BOOST_MIN_HZ = 30f
+        const val LIMITER_MIN_DB = -12f
+        const val LIMITER_MAX_DB = 0f
+        const val LIMITER_RELEASE_MIN_MS = 10f
+        const val LIMITER_RELEASE_MAX_MS = 300f
         const val BASS_BOOST_MAX_HZ = 200f
         const val PREAMP_MIN_DB = -12f
         const val PREAMP_MAX_DB = 12f
@@ -82,6 +91,11 @@ data class EqState32WithMDRC(
         if (bassBoostHz != other.bassBoostHz) return false
         if (preampDb != other.preampDb) return false
         if (smoothCurve != other.smoothCurve) return false
+        if (dynamicBass != other.dynamicBass) return false
+        if (limiterThresholdDb != other.limiterThresholdDb) return false
+        if (limiterReleaseMs != other.limiterReleaseMs) return false
+        if (autoHeadroom != other.autoHeadroom) return false
+        if (bassDetail != other.bassDetail) return false
         return true
     }
 
@@ -99,6 +113,11 @@ data class EqState32WithMDRC(
         result = 31 * result + bassBoostHz.hashCode()
         result = 31 * result + preampDb.hashCode()
         result = 31 * result + smoothCurve.hashCode()
+        result = 31 * result + dynamicBass.hashCode()
+        result = 31 * result + limiterThresholdDb.hashCode()
+        result = 31 * result + limiterReleaseMs.hashCode()
+        result = 31 * result + autoHeadroom.hashCode()
+        result = 31 * result + bassDetail.hashCode()
         return result
     }
 }
