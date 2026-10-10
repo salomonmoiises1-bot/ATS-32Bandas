@@ -29,7 +29,11 @@ class SJBStudioTileService : TileService() {
         val intent = Intent(this, EqService::class.java).apply {
             action = EqService.ACTION_UPDATE_STATE
         }
-        startService(intent)
+        try {
+            startService(intent)
+        } catch (e: IllegalStateException) {
+            // Background start refused; the new state is already persisted and is applied next time the service starts.
+        }
 
         updateTileState()
     }
@@ -39,10 +43,10 @@ class SJBStudioTileService : TileService() {
         val current = prefsManager.loadCurrentState()
         if (current.isEnabled) {
             tile.state = Tile.STATE_ACTIVE
-            tile.subtitle = "Active (32-Band)"
+            if (android.os.Build.VERSION.SDK_INT >= 29) tile.subtitle = "Active (32-Band)"
         } else {
             tile.state = Tile.STATE_INACTIVE
-            tile.subtitle = "Bypassed"
+            if (android.os.Build.VERSION.SDK_INT >= 29) tile.subtitle = "Bypassed"
         }
         tile.updateTile()
     }
