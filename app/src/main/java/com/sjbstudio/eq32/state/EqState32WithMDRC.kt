@@ -18,7 +18,7 @@ data class EqState32WithMDRC(
     val isEnabled: Boolean = true
 ) {
     companion object {
-        // Standard 1/3-octave ISO 32-band log-spaced frequencies from 20 Hz to 20,000 Hz
+        // Custom 32-point logarithmic layout spanning 20 Hz to 20,000 Hz (not the ISO 31-band 1/3-octave centre table).
         val FREQS = doubleArrayOf(
             20.0, 24.99, 31.23, 39.03, 48.77, 60.94, 76.15, 95.16, 118.91, 148.59,
             185.68, 232.03, 289.95, 362.32, 452.76, 565.77, 707.0, 883.47, 1103.99, 1379.56,
