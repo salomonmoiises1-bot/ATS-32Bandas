@@ -16,9 +16,11 @@ if [ ! -x "$BIN" ]; then
   ZIP="$GRADLE_USER_HOME/manual-wrapper/downloads/gradle-$VERSION-bin.zip"
   if [ ! -f "$ZIP" ]; then
     echo "Downloading Gradle $VERSION from $URL"
-    if command -v curl >/dev/null 2>&1; then curl -fL --retry 2 "$URL" -o "$ZIP"
-    elif command -v wget >/dev/null 2>&1; then wget -O "$ZIP" "$URL"
+    # Download to a temp name so an interrupted transfer never leaves a corrupt cached zip.
+    if command -v curl >/dev/null 2>&1; then curl -fL --retry 2 "$URL" -o "$ZIP.part"
+    elif command -v wget >/dev/null 2>&1; then wget -O "$ZIP.part" "$URL"
     else echo "Install curl or wget to bootstrap Gradle." >&2; exit 1; fi
+    mv "$ZIP.part" "$ZIP"
   fi
   command -v unzip >/dev/null 2>&1 || { echo "Install unzip to bootstrap Gradle." >&2; exit 1; }
   TMP="$GRADLE_USER_HOME/manual-wrapper/.extract-$$"

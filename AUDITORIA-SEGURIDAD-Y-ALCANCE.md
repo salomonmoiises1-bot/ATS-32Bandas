@@ -23,3 +23,8 @@
 - Este entorno no tiene `gradle` instalado y el ZIP no incluye `gradle-wrapper.jar`; por tanto, no se afirma que la compilación se haya ejecutado correctamente. El workflow de GitHub instala Gradle 8.4.
 - La revisión estática del código fuente no puede garantizar que Google Play Protect acepte el APK. Play Protect puede considerar firma, reputación, comportamiento del APK o componentes/manifest fusionados. Tras compilar, hay que revisar el manifiesto fusionado y probar la instalación.
 - Se conserva la lógica DSP existente sin reescribirla, para evitar introducir regresiones ajenas al problema de permisos. Esta entrega no constituye una validación matemática completa del procesamiento de audio.
+
+## Nota adicional
+- `AudioPolicyDumpParser` usa reflexión sobre `android.os.ServiceManager` (API oculta) y un `dump` del servicio de audio que normalmente requiere `android.permission.DUMP`. Solo se ejecuta en el modo por app (respaldo) y falla de forma segura (devuelve `null`). Podría ser observado por Google Play.
+- Se agregó `<queries>` con tres paquetes (YouTube, Spotify, AIMP) para la detección en el modo por app; no se usa `QUERY_ALL_PACKAGES`.
+- Se solicita en tiempo de ejecución `POST_NOTIFICATIONS` (Android 13+).
