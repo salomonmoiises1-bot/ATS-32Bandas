@@ -20,6 +20,8 @@ class EqPreferencesManager(context: Context) {
         private const val KEY_MDRC_RELEASE = "mdrc_release"
         private const val KEY_MDRC_MAKEUP = "mdrc_makeup"
         private const val KEY_BASS_BOOST = "bass_boost_db"
+        private const val KEY_BASS_BOOST_HZ = "bass_boost_hz"
+        private const val KEY_PREAMP = "preamp_db"
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -36,6 +38,8 @@ class EqPreferencesManager(context: Context) {
             putString(KEY_MDRC_RELEASE, floatArrayToJson(state.mdrcRelease))
             putString(KEY_MDRC_MAKEUP, floatArrayToJson(state.mdrcMakeup))
             putFloat(KEY_BASS_BOOST, state.bassBoostDb)
+            putFloat(KEY_BASS_BOOST_HZ, state.bassBoostHz)
+            putFloat(KEY_PREAMP, state.preampDb)
             apply()
         }
     }
@@ -53,6 +57,11 @@ class EqPreferencesManager(context: Context) {
 
         val bassBoost = prefs.getFloat(KEY_BASS_BOOST, 0f).let { if (it.isFinite()) it.coerceIn(0f, EqState32WithMDRC.BASS_BOOST_MAX_DB) else 0f }
 
+        val bassBoostHz = prefs.getFloat(KEY_BASS_BOOST_HZ, EqState32WithMDRC.BASS_BOOST_HZ.toFloat())
+            .let { if (it.isFinite()) it.coerceIn(EqState32WithMDRC.BASS_BOOST_MIN_HZ, EqState32WithMDRC.BASS_BOOST_MAX_HZ) else EqState32WithMDRC.BASS_BOOST_HZ.toFloat() }
+        val preamp = prefs.getFloat(KEY_PREAMP, 0f)
+            .let { if (it.isFinite()) it.coerceIn(EqState32WithMDRC.PREAMP_MIN_DB, EqState32WithMDRC.PREAMP_MAX_DB) else 0f }
+
         return EqState32WithMDRC(
             fixedGains = fixed,
             toneGains = tone,
@@ -63,7 +72,9 @@ class EqPreferencesManager(context: Context) {
             mdrcRelease = mdrcRelease,
             mdrcMakeup = mdrcMakeup,
             isEnabled = isEnabled,
-            bassBoostDb = bassBoost
+            bassBoostDb = bassBoost,
+            bassBoostHz = bassBoostHz,
+            preampDb = preamp
         )
     }
 
