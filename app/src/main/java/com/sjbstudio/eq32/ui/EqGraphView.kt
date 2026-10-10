@@ -50,6 +50,19 @@ class EqGraphView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    private val numPoints = 180
+    // dB value of the composite curve at each of the numPoints log-spaced frequencies. Computed when the
+    // state changes (not on every draw) and reused for redraws.
+    private val curveDb = FloatArray(numPoints)
+    private val pointFreqs = DoubleArray(numPoints) { i ->
+        val logMin = log10(20.0); val logMax = log10(20000.0)
+        10.0.pow(logMin + (i.toDouble() / (numPoints - 1)) * (logMax - logMin))
+    }
+    private val dbSteps = floatArrayOf(12f, 6f, 0f, -6f, -12f)
+    private val dbLabels = Array(dbSteps.size) { "${if (dbSteps[it] > 0) "+" else ""}${dbSteps[it].toInt()}dB" }
+    private val freqGrid = doubleArrayOf(50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 20000.0)
+    private val freqLabels = arrayOf("50", "100", "250", "500", "1k", "2.5k", "5k", "10k", "20k")
+    private val fillColors = intArrayOf(Color.parseColor("#3306b6d4"), Color.parseColor("#0506b6d4"))
     private val curvePath = Path()
     private val fillPath = Path()
     private val biquadFilters = mutableListOf<Biquad>()
@@ -64,7 +77,26 @@ class EqGraphView @JvmOverloads constructor(
     fun updateCurve(state: EqState32WithMDRC) {
         currentState = state
         rebuildBiquadCascade(state)
+        recomputeCurve()
         invalidate()
+    }
+
+    private fun recomputeCurve() {
+        val enabled = currentState?.isEnabled == true
+        for (i in 0 until numPoints) {
+            var totalDb = 0.0
+            if (enabled) {
+                val f = pointFreqs[i]
+                for (bq in biquadFilters) totalDb += bq.magnitudeAtDb(f, 48000.0)
+                smoothCurve?.let { totalDb += it.at(f) }
+            }
+            curveDb[i] = totalDb.toFloat()
+        }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        fillPaint.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), fillColors, null, Shader.TileMode.CLAMP)
     }
 
     private fun rebuildBiquadCascade(state: EqState32WithMDRC) {
@@ -103,17 +135,15 @@ class EqGraphView @JvmOverloads constructor(
         if (w <= 0 || h <= 0) return
 
         // 1. Draw horizontal dB grid lines (+12, +6, 0, -6, -12)
-        val dbSteps = floatArrayOf(12f, 6f, 0f, -6f, -12f)
-        for (db in dbSteps) {
+        for (k in dbSteps.indices) {
+            val db = dbSteps[k]
             val y = dbToY(db, h)
             val p = if (db == 0f) centerLinePaint else gridPaint
             canvas.drawLine(0f, y, w, y, p)
-            canvas.drawText("${if (db > 0) "+" else ""}${db.toInt()}dB", 12f, y - 4f, textPaint)
+            canvas.drawText(dbLabels[k], 12f, y - 4f, textPaint)
         }
 
         // 2. Draw vertical frequency grid lines (50, 100, 200, 500, 1k, 2k, 5k, 10k, 20k)
-        val freqGrid = doubleArrayOf(50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 20000.0)
-        val freqLabels = arrayOf("50", "100", "250", "500", "1k", "2.5k", "5k", "10k", "20k")
         freqGrid.forEachIndexed { idx, f ->
             val x = freqToX(f, w)
             canvas.drawLine(x, 0f, x, h, gridPaint)
@@ -125,24 +155,9 @@ class EqGraphView @JvmOverloads constructor(
         fillPath.reset()
 
         val zeroY = dbToY(0f, h)
-        val numPoints = 180
-        val logMin = log10(minFreq)
-        val logMax = log10(maxFreq)
-
         for (i in 0 until numPoints) {
-            val t = i.toDouble() / (numPoints - 1)
-            val f = 10.0.pow(logMin + t * (logMax - logMin))
-            val x = (t * w).toFloat()
-
-            var totalDb = 0.0
-            if (currentState?.isEnabled == true) {
-                for (bq in biquadFilters) {
-                    totalDb += bq.magnitudeAtDb(f, 48000.0)
-                }
-                smoothCurve?.let { totalDb += it.at(f) }
-            }
-
-            val y = dbToY(totalDb.toFloat().coerceIn(minDb, maxDb), h)
+            val x = (i.toFloat() / (numPoints - 1)) * w
+            val y = dbToY(curveDb[i].coerceIn(minDb, maxDb), h)
 
             if (i == 0) {
                 curvePath.moveTo(x, y)
@@ -156,13 +171,6 @@ class EqGraphView @JvmOverloads constructor(
 
         fillPath.lineTo(w, zeroY)
         fillPath.close()
-
-        // Gradient shader for fill
-        fillPaint.shader = LinearGradient(
-            0f, 0f, 0f, h,
-            intArrayOf(Color.parseColor("#3306b6d4"), Color.parseColor("#0506b6d4")),
-            null, Shader.TileMode.CLAMP
-        )
 
         canvas.drawPath(fillPath, fillPaint)
         canvas.drawPath(curvePath, curvePaint)
