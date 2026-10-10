@@ -22,6 +22,7 @@ class EqPreferencesManager(context: Context) {
         private const val KEY_BASS_BOOST = "bass_boost_db"
         private const val KEY_BASS_BOOST_HZ = "bass_boost_hz"
         private const val KEY_PREAMP = "preamp_db"
+        private const val KEY_SMOOTH = "smooth_curve"
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -40,6 +41,7 @@ class EqPreferencesManager(context: Context) {
             putFloat(KEY_BASS_BOOST, state.bassBoostDb)
             putFloat(KEY_BASS_BOOST_HZ, state.bassBoostHz)
             putFloat(KEY_PREAMP, state.preampDb)
+            putBoolean(KEY_SMOOTH, state.smoothCurve)
             apply()
         }
     }
@@ -74,7 +76,8 @@ class EqPreferencesManager(context: Context) {
             isEnabled = isEnabled,
             bassBoostDb = bassBoost,
             bassBoostHz = bassBoostHz,
-            preampDb = preamp
+            preampDb = preamp,
+            smoothCurve = prefs.getBoolean(KEY_SMOOTH, false)
         )
     }
 

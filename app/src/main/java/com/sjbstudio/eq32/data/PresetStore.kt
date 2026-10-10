@@ -72,6 +72,7 @@ class PresetStore(context: Context) {
         put("fixed", arr(s.fixedGains)); put("tone", arr(s.toneGains))
         put("boostDb", s.bassBoostDb.toDouble()); put("boostHz", s.bassBoostHz.toDouble())
         put("preamp", s.preampDb.toDouble())
+        put("smooth", s.smoothCurve)
         put("mdrcOn", s.mdrcEnabled)
         put("thr", arr(s.mdrcThreshold)); put("ratio", arr(s.mdrcRatio))
         put("atk", arr(s.mdrcAttack)); put("rel", arr(s.mdrcRelease)); put("mk", arr(s.mdrcMakeup))
@@ -84,6 +85,7 @@ class PresetStore(context: Context) {
         bassBoostHz = scalar(o, "boostHz", EqState32WithMDRC.BASS_BOOST_HZ.toFloat(),
             EqState32WithMDRC.BASS_BOOST_MIN_HZ, EqState32WithMDRC.BASS_BOOST_MAX_HZ),
         preampDb = scalar(o, "preamp", 0f, EqState32WithMDRC.PREAMP_MIN_DB, EqState32WithMDRC.PREAMP_MAX_DB),
+        smoothCurve = o.optBoolean("smooth", false),
         mdrcEnabled = o.optBoolean("mdrcOn", false),
         mdrcThreshold = floats(o, "thr", 4, -20f, -40f, 0f),
         mdrcRatio = floats(o, "ratio", 4, 2f, 1f, 20f),
