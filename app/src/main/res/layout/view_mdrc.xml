@@ -21,7 +21,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="MDRC DYNAMICS COMPRESSOR"
+                android:text="COMPRESOR DE DINÁMICA MDRC"
                 android:textColor="@color/text_primary"
                 android:textSize="13sp"
                 android:textStyle="bold"
@@ -30,7 +30,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="4-Band Post-EQ / Pre-Limiter MBC"
+                android:text="MBC de 4 bandas (después del EQ, antes del limitador)"
                 android:textColor="@color/text_secondary"
                 android:textSize="10sp" />
         </LinearLayout>
@@ -70,7 +70,7 @@
             android:layout_width="0dp"
             android:layout_height="36dp"
             android:layout_weight="1"
-            android:text="LOW-MID"
+            android:text="MED-BAJOS"
             android:textSize="9sp"
             android:textColor="@color/text_primary"
             android:backgroundTint="@color/surface_dark"
@@ -82,7 +82,7 @@
             android:layout_width="0dp"
             android:layout_height="36dp"
             android:layout_weight="1"
-            android:text="HIGH-MID"
+            android:text="MED-ALTOS"
             android:textSize="9sp"
             android:textColor="@color/text_primary"
             android:backgroundTint="@color/surface_dark"
@@ -94,7 +94,7 @@
             android:layout_width="0dp"
             android:layout_height="36dp"
             android:layout_weight="1"
-            android:text="AIR (&gt;6k)"
+            android:text="AIRE (&gt;6k)"
             android:textSize="9sp"
             android:textColor="@color/text_primary"
             android:backgroundTint="@color/surface_dark"
@@ -111,7 +111,7 @@
         <TextView
             android:layout_width="80dp"
             android:layout_height="wrap_content"
-            android:text="THRESHOLD"
+            android:text="UMBRAL"
             android:textColor="@color/text_secondary"
             android:textSize="10sp" />
 
@@ -183,7 +183,7 @@
         <TextView
             android:layout_width="80dp"
             android:layout_height="wrap_content"
-            android:text="ATTACK"
+            android:text="ATAQUE"
             android:textColor="@color/text_secondary"
             android:textSize="10sp" />
 
@@ -219,7 +219,7 @@
         <TextView
             android:layout_width="80dp"
             android:layout_height="wrap_content"
-            android:text="RELEASE"
+            android:text="LIBERACIÓN"
             android:textColor="@color/text_secondary"
             android:textSize="10sp" />
 
@@ -255,7 +255,7 @@
         <TextView
             android:layout_width="80dp"
             android:layout_height="wrap_content"
-            android:text="MAKEUP"
+            android:text="GANANCIA"
             android:textColor="@color/text_secondary"
             android:textSize="10sp" />
 

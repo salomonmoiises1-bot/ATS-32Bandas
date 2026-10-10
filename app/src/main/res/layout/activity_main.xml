@@ -43,7 +43,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="35-BIQUAD DSP · 4-BAND MDRC · ZERO ROOT"
+                        android:text="DSP BIQUAD · MDRC DE 4 BANDAS · SIN ROOT"
                         android:textColor="@color/text_secondary"
                         android:textSize="10sp"
                         android:letterSpacing="0.08" />
@@ -61,7 +61,7 @@
                         style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="FLAT"
+                        android:text="PLANO"
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp" />
 
@@ -114,7 +114,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="BASS"
+                            android:text="GRAVES"
                             android:textColor="@color/text_primary"
                             android:textSize="11sp"
                             android:textStyle="bold" />
@@ -122,7 +122,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="100 Hz Shelf"
+                            android:text="Shelf 100 Hz"
                             android:textColor="@color/text_secondary"
                             android:textSize="9sp" />
 
@@ -144,7 +144,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="MID"
+                            android:text="MEDIOS"
                             android:textColor="@color/text_primary"
                             android:textSize="11sp"
                             android:textStyle="bold" />
@@ -152,7 +152,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="1.0 kHz Peak"
+                            android:text="Pico 1,0 kHz"
                             android:textColor="@color/text_secondary"
                             android:textSize="9sp" />
 
@@ -174,7 +174,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="TREBLE"
+                            android:text="AGUDOS"
                             android:textColor="@color/text_primary"
                             android:textSize="11sp"
                             android:textStyle="bold" />
@@ -182,7 +182,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="8.0 kHz Shelf"
+                            android:text="Shelf 8,0 kHz"
                             android:textColor="@color/text_secondary"
                             android:textSize="9sp" />
 
@@ -204,7 +204,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="BOOST"
+                            android:text="REFUERZO"
                             android:textColor="@color/text_primary"
                             android:textSize="11sp"
                             android:textStyle="bold" />
@@ -212,7 +212,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="60 Hz Bass Boost"
+                            android:text="Refuerzo de graves"
                             android:textColor="@color/text_secondary"
                             android:textSize="9sp" />
 
@@ -285,7 +285,7 @@
                         <TextView
                             android:layout_width="80dp"
                             android:layout_height="wrap_content"
-                            android:text="BOOST FREQ"
+                            android:text="FREC. REFUERZO"
                             android:textColor="@color/text_secondary"
                             android:textSize="10sp" />
 
@@ -310,6 +310,43 @@
                             android:textSize="10sp"
                             android:gravity="end" />
                     </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="CURVA SUAVE"
+                                android:textColor="@color/text_primary"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Cada slider vale exactamente su dB; sin acumulación entre bandas"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="9sp" />
+                        </LinearLayout>
+
+                        <com.google.android.material.materialswitch.MaterialSwitch
+                            android:id="@+id/switchSmooth"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            app:thumbTint="@color/neon_cyan"
+                            app:trackTint="@color/surface_card" />
+                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -332,7 +369,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="COMPOSITE FREQUENCY RESPONSE (35 BIQUADS)"
+                        android:text="RESPUESTA EN FRECUENCIA COMBINADA"
                         android:textColor="@color/text_secondary"
                         android:textSize="9sp"
                         android:letterSpacing="0.05"
@@ -372,7 +409,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="32-BAND GRAPHIC EQUALIZER (-12dB to +12dB)"
+                            android:text="ECUALIZADOR GRÁFICO DE 32 BANDAS (-12 dB a +12 dB)"
                             android:textColor="@color/text_secondary"
                             android:textSize="9sp"
                             android:letterSpacing="0.05" />
@@ -380,7 +417,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="SWIPE HORIZONTALLY · TAP dB TO ZERO"
+                            android:text="DESLIZÁ HORIZONTALMENTE · TOCÁ EL dB PARA PONER 0"
                             android:textColor="@color/text_secondary"
                             android:textSize="9sp"
                             android:layout_alignParentEnd="true" />
