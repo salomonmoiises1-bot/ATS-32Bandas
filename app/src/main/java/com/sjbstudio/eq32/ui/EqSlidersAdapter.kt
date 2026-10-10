@@ -37,6 +37,21 @@ class EqSlidersAdapter(
         holder.binding.sliderVertical.clearOnChangeListeners()
         holder.binding.sliderVertical.value = gain.coerceIn(-12.0f, 12.0f)
 
+        // Keep the vertical drag owned by the slider. The screen is inside a
+        // NestedScrollView, which otherwise steals vertical gestures and makes
+        // the thumb appear to move with the page instead of changing gain.
+        holder.binding.sliderVertical.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN,
+                android.view.MotionEvent.ACTION_MOVE ->
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL ->
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+            }
+            false // preserve Material Slider's own touch handling
+        }
+
         holder.binding.sliderVertical.addOnChangeListener { _, value, fromUser ->
             if (fromUser) {
                 gains[position] = value
