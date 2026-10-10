@@ -16,7 +16,9 @@ data class EqState32WithMDRC(
     val mdrcRelease: FloatArray = FloatArray(4) { 200f },  // ms: 10 to 500
     val mdrcMakeup: FloatArray = FloatArray(4) { 0f },     // dB: 0 to 18
     val isEnabled: Boolean = true,
-    val bassBoostDb: Float = 0f // dB: 0 to 12, low-shelf biquad @ BASS_BOOST_HZ (same pipeline as tone)
+    val bassBoostDb: Float = 0f, // dB: 0 to 12, low-shelf biquad (same pipeline as tone)
+    val bassBoostHz: Float = BASS_BOOST_HZ.toFloat(), // 30 to 200 Hz shelf frequency
+    val preampDb: Float = 0f // -12 to +12 dB input gain ahead of the EQ
 ) {
     companion object {
         // Custom 32-point logarithmic layout spanning 20 Hz to 20,000 Hz (not the ISO 31-band 1/3-octave centre table).
@@ -28,6 +30,10 @@ data class EqState32WithMDRC(
         )
         const val Q = 4.318
         const val BASS_BOOST_HZ = 60.0
+        const val BASS_BOOST_MIN_HZ = 30f
+        const val BASS_BOOST_MAX_HZ = 200f
+        const val PREAMP_MIN_DB = -12f
+        const val PREAMP_MAX_DB = 12f
         const val BASS_BOOST_MAX_DB = 12f
 
         // MDRC Band Split Crossover Frequencies (4 bands)
@@ -41,7 +47,7 @@ data class EqState32WithMDRC(
      */
     fun toBiquads(fs: Int = 48000): List<BiquadConfig> {
         val list = mutableListOf<BiquadConfig>()
-        if (bassBoostDb != 0f) list.add(BiquadConfig.LowShelf(BASS_BOOST_HZ, bassBoostDb, 1.0))
+        if (bassBoostDb != 0f) list.add(BiquadConfig.LowShelf(bassBoostHz.toDouble(), bassBoostDb, 1.0))
         if (toneGains.getOrElse(0) { 0f } != 0f) list.add(BiquadConfig.LowShelf(100.0, toneGains[0], 1.0))
         if (toneGains.getOrElse(1) { 0f } != 0f) list.add(BiquadConfig.Peaking(1000.0, 0.707, toneGains[1]))
         if (toneGains.getOrElse(2) { 0f } != 0f) list.add(BiquadConfig.HighShelf(8000.0, toneGains[2], 1.0))
@@ -72,6 +78,8 @@ data class EqState32WithMDRC(
         if (!mdrcMakeup.contentEquals(other.mdrcMakeup)) return false
         if (isEnabled != other.isEnabled) return false
         if (bassBoostDb != other.bassBoostDb) return false
+        if (bassBoostHz != other.bassBoostHz) return false
+        if (preampDb != other.preampDb) return false
         return true
     }
 
@@ -86,6 +94,8 @@ data class EqState32WithMDRC(
         result = 31 * result + mdrcMakeup.contentHashCode()
         result = 31 * result + isEnabled.hashCode()
         result = 31 * result + bassBoostDb.hashCode()
+        result = 31 * result + bassBoostHz.hashCode()
+        result = 31 * result + preampDb.hashCode()
         return result
     }
 }
