@@ -44,8 +44,8 @@ object ParametricToDpConverter {
         val gains: FloatArray,
     )
 
-    private fun respond(eq: ParametricEqualizer, f: Float): Float {
-        val base = eq.getFrequencyResponse(f)
+    private fun respond(eq: ParametricEqualizer, f: Float, extra: ((Float) -> Float)? = null): Float {
+        val base = eq.getFrequencyResponse(f) + (extra?.invoke(f) ?: 0f)
         val overlay = overlayEq
         return if (overlay != null && overlay !== eq) {
             base + overlay.getFrequencyResponse(f)
@@ -60,11 +60,11 @@ object ParametricToDpConverter {
         return p
     }
 
-    private fun responseGrid(eq: ParametricEqualizer, max: Float): FloatArray {
+    private fun responseGrid(eq: ParametricEqualizer, max: Float, extra: ((Float) -> Float)?): FloatArray {
         val min = 10f
         val span = ln(max / min)
         return FloatArray(GRID_SIZE) { i ->
-            respond(eq, min * kotlin.math.exp(span * i / (GRID_SIZE - 1)))
+            respond(eq, min * kotlin.math.exp(span * i / (GRID_SIZE - 1)), extra)
         }
     }
 
@@ -205,10 +205,11 @@ object ParametricToDpConverter {
         cutoffs: FloatArray,
         n: Int,
         fs: Float,
+        extra: ((Float) -> Float)?,
     ): FloatArray {
         val half = n / 2 + 1
         val binHz = fs / n
-        val target = FloatArray(half) { k -> respond(eq, (k * binHz).coerceAtLeast(1f)) }
+        val target = FloatArray(half) { k -> respond(eq, (k * binHz).coerceAtLeast(1f), extra) }
         val result = FloatArray(cutoffs.size)
         var previousStop = -1
 
@@ -221,14 +222,14 @@ object ParametricToDpConverter {
                 result[i] = sum / (stop - start + 1)
                 previousStop = stop
             } else {
-                result[i] = respond(eq, cutoffs[i])
+                result[i] = respond(eq, cutoffs[i], extra)
             }
         }
         return result
     }
 
     @Synchronized
-    fun convertFeatureAware(eq: ParametricEqualizer): ConvertedBands {
+    fun convertFeatureAware(eq: ParametricEqualizer, extra: ((Float) -> Float)? = null): ConvertedBands {
         require(EQ32_FREQUENCIES.size == BAND_COUNT)
         val fs = deviceSampleRateHz.coerceIn(8000f, 192000f)
         val usableMaxFreq = maxUsableFrequency(fs)
@@ -252,7 +253,7 @@ object ParametricToDpConverter {
             frozen
         } else {
             adaptiveCutoffs(
-                listOf(responseGrid(eq, usableMaxFreq)),
+                listOf(responseGrid(eq, usableMaxFreq, extra)),
                 collectAnchors(eq, usableMaxFreq),
                 BAND_COUNT,
                 binHz,
@@ -266,7 +267,7 @@ object ParametricToDpConverter {
             }
         }
 
-        return ConvertedBands(cutoffs, bandSpaceDeconvolve(eq, cutoffs, n, fs))
+        return ConvertedBands(cutoffs, bandSpaceDeconvolve(eq, cutoffs, n, fs, extra))
     }
 
     /** Kept for callers that use the previous sBz API name. */

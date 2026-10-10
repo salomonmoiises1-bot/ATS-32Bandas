@@ -39,6 +39,14 @@ class DynamicsProcessingManager {
     private var isEffectEnabled: Boolean = false
     private var lastMdrcEnabled: Boolean? = null
     private var lastPreampDb: Float? = null
+    private var lastAppliedState: EqState32WithMDRC? = null
+    // Cache of what is currently written in the effect, so only changed EQ bands are sent.
+    @Volatile private var effectGeneration = 0
+    @Volatile private var cacheGeneration = -1
+    @Volatile private var writtenCutoffs: FloatArray? = null
+    @Volatile private var writtenGains: FloatArray? = null
+    @Volatile private var writtenEnabled: Boolean? = null
+    @Volatile private var eqDirty = true
     private data class MdrcSnapshot(
         val threshold: List<Float>, val ratio: List<Float>, val attack: List<Float>,
         val release: List<Float>, val makeup: List<Float>
@@ -56,6 +64,7 @@ class DynamicsProcessingManager {
         val stableState = snapshotState(state)
         latestState = stableState
         releaseEffect()
+        effectGeneration++
         currentSessionId = sessionId
         return try {
             val config = buildDynamicsConfig(stableState)
@@ -65,7 +74,8 @@ class DynamicsProcessingManager {
             dynamicsProcessing = dp
             isEffectEnabled = stableState.isEnabled
             lastMdrcEnabled = stableState.mdrcEnabled
-            lastMdrcSnapshot = if (stableState.mdrcEnabled) mdrcSnapshot(stableState) else null
+            lastMdrcSnapshot = mdrcSnapshot(stableState)
+            lastAppliedState = null
             ParametricToDpConverter.deviceSampleRateHz = currentSampleRate().toFloat()
             ParametricToDpConverter.frameDurationMs = DP_FRAME_DURATION_MS
             ParametricToDpConverter.layoutFrozen = true
@@ -94,8 +104,11 @@ class DynamicsProcessingManager {
             preEq.setBand(index, EqBand(state.isEnabled, safeFrequency, 0f))
         }
 
-        val mbc = Mbc(state.mdrcEnabled, true, MDRC_BANDS)
-        if (state.mdrcEnabled) {
+        // The MBC stage is ALWAYS part of the effect (bands configured from the saved values) and only its
+        // "enabled" flag follows the MDRC switch. Toggling MDRC at runtime then never rebuilds the effect,
+        // which is what used to cause a short click/noise.
+        val mbc = Mbc(true, state.mdrcEnabled, MDRC_BANDS)
+        run {
             val nyquistSafe = (currentSampleRate() * 0.45f).coerceAtLeast(20f)
             val mdrcSource = floatArrayOf(120f, 1000f, 6000f, 20000f)
             val mdrcLogSpan = kotlin.math.ln(20000.0 / 120.0)
@@ -128,7 +141,7 @@ class DynamicsProcessingManager {
             DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
             2,
             true, bandCount,
-            state.mdrcEnabled, MDRC_BANDS,
+            true, MDRC_BANDS,
             false, 0,
             true
         )
@@ -136,7 +149,7 @@ class DynamicsProcessingManager {
         val config = builder.build()
         for (channel in 0 until 2) {
             config.setPreEqByChannelIndex(channel, preEq)
-            if (state.mdrcEnabled) config.setMbcByChannelIndex(channel, mbc)
+            config.setMbcByChannelIndex(channel, mbc)
             config.setLimiterByChannelIndex(channel, limiter)
         }
         return config
@@ -147,22 +160,25 @@ class DynamicsProcessingManager {
         val stableState = snapshotState(state)
         latestState = stableState
         val dp = dynamicsProcessing ?: return
+        // Periodic refreshes (e.g. every 5 s) with an unchanged state must not rewrite anything.
+        if (stableState == lastAppliedState && !eqDirty) return
         try {
-            if (lastMdrcEnabled != null && lastMdrcEnabled != stableState.mdrcEnabled) {
-                attachToSession(currentSessionId, stableState)
-                return
-            }
             if (isEffectEnabled != stableState.isEnabled) {
                 dp.enabled = stableState.isEnabled
                 isEffectEnabled = stableState.isEnabled
             }
-            if (!stableState.isEnabled) return
+            if (!stableState.isEnabled) {
+                lastAppliedState = stableState
+                return
+            }
 
             applyPreamp(dp, stableState.preampDb)
             scheduleEqWrite(stableState)
-            val mdrcSnapshot = if (stableState.mdrcEnabled) mdrcSnapshot(stableState) else null
-            // EQ fader drags must not rewrite all MBC parameters on every frame.
-            if (mdrcSnapshot != null && mdrcSnapshot != lastMdrcSnapshot) {
+
+            // MBC parameters first (only when they changed), then the enable flag, so the compressor
+            // never starts with stale values. No effect rebuild is involved.
+            val snapshot = mdrcSnapshot(stableState)
+            if (snapshot != lastMdrcSnapshot) {
                 for (channel in 0 until dp.channelCount) {
                     for (band in 0 until MDRC_BANDS) {
                         val nativeBand = dp.getMbcBandByChannelIndex(channel, band)
@@ -174,8 +190,17 @@ class DynamicsProcessingManager {
                         dp.setMbcBandByChannelIndex(channel, band, nativeBand)
                     }
                 }
-                lastMdrcSnapshot = mdrcSnapshot
+                lastMdrcSnapshot = snapshot
             }
+            if (lastMdrcEnabled != stableState.mdrcEnabled) {
+                for (channel in 0 until dp.channelCount) {
+                    val mbc = dp.getMbcByChannelIndex(channel)
+                    mbc.isEnabled = stableState.mdrcEnabled
+                    dp.setMbcByChannelIndex(channel, mbc)
+                }
+                lastMdrcEnabled = stableState.mdrcEnabled
+            }
+            lastAppliedState = stableState
         } catch (e: Exception) {
             Log.w(TAG, "Realtime update failed; rebuilding session config", e)
             attachToSession(currentSessionId, stableState)
@@ -187,9 +212,11 @@ class DynamicsProcessingManager {
         // Snapshot mutable arrays before the worker reads them.
         latestState = snapshotState(state)
         eqWriteRevision++
+        eqDirty = true
         if (pendingEqWrite != null) return
         val job = Runnable {
             val revisionAtStart = eqWriteRevision
+            val generationAtStart = effectGeneration
             val latest = latestState
             val dp = dynamicsProcessing
             if (dp == null) {
@@ -210,7 +237,9 @@ class DynamicsProcessingManager {
                     val safeFrequency = (20.0 * kotlin.math.exp(fraction * kotlin.math.ln(usableMaxHz / 20.0))).toFloat()
                     eq.addBand(
                         safeFrequency,
-                        latest.fixedGains.getOrElse(index) { 0f }.coerceIn(-15f, 15f),
+                        // Smooth mode: the 32 bells stay at 0 dB only as cutoff anchors; the slider
+                        // values enter the target response through the interpolated curve below.
+                        if (latest.smoothCurve) 0f else latest.fixedGains.getOrElse(index) { 0f }.coerceIn(-15f, 15f),
                         BiquadFilter.FilterType.BELL,
                         EQ_BAND_Q
                     )
@@ -233,23 +262,51 @@ class DynamicsProcessingManager {
                 ParametricToDpConverter.deviceSampleRateHz = sampleRate.toFloat()
                 ParametricToDpConverter.frameDurationMs = DP_FRAME_DURATION_MS
                 ParametricToDpConverter.layoutFrozen = true
-                val converted = ParametricToDpConverter.convertFeatureAware(eq)
+                val smooth = if (latest.smoothCurve) {
+                    SmoothCurve(FloatArray(EqState32WithMDRC.FREQS.size) { latest.fixedGains.getOrElse(it) { 0f }.coerceIn(-15f, 15f) })
+                } else null
+                val converted = ParametricToDpConverter.convertFeatureAware(eq, smooth?.let { c -> { f: Float -> c.at(f.toDouble()) } })
                 if (converted.cutoffs.size != REQUESTED_EQ_BANDS || converted.gains.size != REQUESTED_EQ_BANDS) {
                     error("Converter must return exactly 32 bands")
                 }
                 val channels = dp.channelCount.coerceAtMost(2)
-                for (channel in 0 until channels) {
-                    val stage = Eq(true, true, REQUESTED_EQ_BANDS)
-                    for (index in 0 until REQUESTED_EQ_BANDS) {
-                        val cutoff = converted.cutoffs[index].coerceIn(MIN_CUTOFF_HZ, MAX_CUTOFF_HZ)
-                        val gain = if (latest.isEnabled) converted.gains[index].coerceIn(-15f, 15f) else 0f
-                        stage.setBand(index, EqBand(latest.isEnabled, cutoff, gain))
-                    }
-                    if (channel == 0) dp.setPreEqByChannelIndex(0, stage)
-                    else dp.setPreEqByChannelIndex(channel, stage)
+                val cutoffs = FloatArray(REQUESTED_EQ_BANDS) { converted.cutoffs[it].coerceIn(MIN_CUTOFF_HZ, MAX_CUTOFF_HZ) }
+                val gains = FloatArray(REQUESTED_EQ_BANDS) {
+                    if (latest.isEnabled) converted.gains[it].coerceIn(-15f, 15f) else 0f
                 }
+                val prevCutoffs = writtenCutoffs
+                val prevGains = writtenGains
+                val sameLayout = cacheGeneration == generationAtStart && generationAtStart == effectGeneration &&
+                    prevCutoffs != null && prevGains != null && writtenEnabled == latest.isEnabled &&
+                    prevCutoffs.contentEquals(cutoffs)
+                try {
+                    if (sameLayout && prevGains != null) {
+                        // Same band layout: send only the bands whose gain changed.
+                        for (index in 0 until REQUESTED_EQ_BANDS) {
+                            if (gains[index] != prevGains[index]) {
+                                val band = EqBand(latest.isEnabled, cutoffs[index], gains[index])
+                                for (channel in 0 until channels) dp.setPreEqBandByChannelIndex(channel, index, band)
+                            }
+                        }
+                    } else {
+                        for (channel in 0 until channels) {
+                            val stage = Eq(true, true, REQUESTED_EQ_BANDS)
+                            for (index in 0 until REQUESTED_EQ_BANDS) {
+                                stage.setBand(index, EqBand(latest.isEnabled, cutoffs[index], gains[index]))
+                            }
+                            dp.setPreEqByChannelIndex(channel, stage)
+                        }
+                    }
+                } catch (e: Exception) {
+                    writtenCutoffs = null; writtenGains = null; writtenEnabled = null; cacheGeneration = -1
+                    throw e
+                }
+                if (generationAtStart == effectGeneration) {
+                    writtenCutoffs = cutoffs; writtenGains = gains; writtenEnabled = latest.isEnabled
+                    cacheGeneration = generationAtStart
+                }
+                if (eqWriteRevision == revisionAtStart) eqDirty = false
                 lastEqWriteMs = SystemClock.uptimeMillis()
-                Log.d(TAG, "Applied converted EQ32 response to session=$currentSessionId")
             } catch (e: Exception) {
                 Log.e(TAG, "EQ32 response conversion/write failed for session=$currentSessionId", e)
             } finally {
@@ -329,6 +386,8 @@ class DynamicsProcessingManager {
             lastMdrcEnabled = null
             lastMdrcSnapshot = null
             lastPreampDb = null
+            lastAppliedState = null
+            writtenCutoffs = null; writtenGains = null; writtenEnabled = null; cacheGeneration = -1
             isEffectEnabled = false
         }
     }
