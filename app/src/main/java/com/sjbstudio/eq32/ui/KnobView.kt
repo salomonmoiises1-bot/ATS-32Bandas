@@ -121,7 +121,9 @@ class KnobView @JvmOverloads constructor(
         val norm = (currentValue - minValue) / (maxValue - minValue)
         val currentAngle = minAngle + norm * (maxAngle - minAngle)
 
-        if (currentValue >= 0) {
+        if (minValue >= 0f) {
+            canvas.drawArc(arcBounds, 135f, norm * 270f, false, activeArcPaint)
+        } else if (currentValue >= 0) {
             val sweep = (currentValue / maxValue) * 135f
             canvas.drawArc(arcBounds, 270f, sweep, false, activeArcPaint)
         } else {
