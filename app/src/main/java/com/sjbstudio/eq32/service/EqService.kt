@@ -190,9 +190,9 @@ class EqService : Service() {
         return START_STICKY
     }
 
-    fun updateState(newState: EqState32WithMDRC) {
+    fun updateState(newState: EqState32WithMDRC, persist: Boolean = true) {
         currentState = newState
-        prefsManager.saveCurrentState(newState)
+        if (persist) prefsManager.saveCurrentState(newState)
         dynamicsManagers.values.forEach { it.applyState(newState) }
         updateNotification()
     }
