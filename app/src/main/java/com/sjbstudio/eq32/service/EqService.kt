@@ -42,6 +42,9 @@ class EqService : Service() {
             "com.spotify.music",
             "com.aimp.player"
         )
+        // Route B: request Android's global output-mix audio session. This can affect
+        // all system audio and is only effective on Android builds that permit session 0.
+        private const val USE_GLOBAL_OUTPUT_SESSION = true
 
         fun startService(context: Context) {
             val intent = Intent(context, EqService::class.java).apply {
@@ -59,8 +62,8 @@ class EqService : Service() {
     private val dynamicsManagers = mutableMapOf<Int, DynamicsProcessingManager>()
     private lateinit var prefsManager: EqPreferencesManager
     private var currentState = EqState32WithMDRC()
-    // Keep only explicitly targeted app sessions; never attach session 0/global output.
-    // Keep broadcast-announced sessions separate from sessions discovered by the EQ314-style listener.
+    // Global output mode uses key 0 for the output-mix DynamicsProcessing instance.
+    // Per-app session maps remain for compatibility with the existing receiver code.
     private val announcedSessions = mutableMapOf<Int, String>()
     private val detectedSessions = mutableMapOf<Int, String>()
     private val sessionHandler = Handler(Looper.getMainLooper())
@@ -76,7 +79,7 @@ class EqService : Service() {
         override fun run() {
             if (!serviceDestroyed) {
                 refreshActiveSession()
-                sessionHandler.postDelayed(this, 2000L)
+                sessionHandler.postDelayed(this, if (USE_GLOBAL_OUTPUT_SESSION) 5000L else 2000L)
             }
         }
     }
@@ -113,19 +116,25 @@ class EqService : Service() {
         prefsManager = EqPreferencesManager(this)
         currentState = prefsManager.loadCurrentState()
         createNotificationChannel()
-        val audioManager = getSystemService(AudioManager::class.java)
-        try {
-            audioManager?.registerAudioPlaybackCallback(playbackCallback, sessionHandler)
-            playbackCallbackRegistered = audioManager != null
-        } catch (e: Exception) {
-            Log.w(TAG, "Playback callback registration unavailable", e)
+        if (USE_GLOBAL_OUTPUT_SESSION) {
+            ensureGlobalOutputEffect()
+            // Retry while the service remains alive in case audio policy was not ready yet.
+            sessionHandler.postDelayed(sessionRefresh, 5000L)
+        } else {
+            val audioManager = getSystemService(AudioManager::class.java)
+            try {
+                audioManager?.registerAudioPlaybackCallback(playbackCallback, sessionHandler)
+                playbackCallbackRegistered = audioManager != null
+            } catch (e: Exception) {
+                Log.w(TAG, "Playback callback registration unavailable", e)
+            }
+            val thread = HandlerThread("ATSSessionRecovery").also { it.start() }
+            recoveryThread = thread
+            recoveryHandler = Handler(thread.looper)
+            recoveryHandler?.post(sessionRecovery)
+            sessionHandler.post(sessionRefresh)
+            refreshActiveSession()
         }
-        val thread = HandlerThread("ATSSessionRecovery").also { it.start() }
-        recoveryThread = thread
-        recoveryHandler = Handler(thread.looper)
-        recoveryHandler?.post(sessionRecovery)
-        sessionHandler.post(sessionRefresh)
-        refreshActiveSession()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -142,6 +151,10 @@ class EqService : Service() {
                 updateNotification()
             }
             ACTION_ATTACH_SESSION, ACTION_DETECTED_ATTACH_SESSION -> {
+                if (USE_GLOBAL_OUTPUT_SESSION) {
+                    ensureGlobalOutputEffect()
+                    return START_STICKY
+                }
                 val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION, 0)
                 val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME).orEmpty()
                 if (isTargetPackage(packageName) && sessionId > 0) {
@@ -153,6 +166,11 @@ class EqService : Service() {
                 }
             }
             ACTION_DETACH_SESSION, ACTION_DETECTED_DETACH_SESSION -> {
+                if (USE_GLOBAL_OUTPUT_SESSION) {
+                    // Playback-session changes must not detach the global output effect.
+                    ensureGlobalOutputEffect()
+                    return START_STICKY
+                }
                 val sessionId = intent.getIntExtra(EXTRA_AUDIO_SESSION, 0)
                 if (sessionId > 0) {
                     if (intent.action == ACTION_DETECTED_DETACH_SESSION) detectedSessions.remove(sessionId)
@@ -215,6 +233,8 @@ class EqService : Service() {
 
         val statusText = when {
             !currentState.isEnabled -> "DSP BYPASSED"
+            USE_GLOBAL_OUTPUT_SESSION && dynamicsManagers.containsKey(0) -> "DSP global conectado · salida del sistema"
+            USE_GLOBAL_OUTPUT_SESSION -> "Intentando conectar DSP global"
             dynamicsManagers.isNotEmpty() -> "DSP activo · sesión de app objetivo conectada"
             else -> "Esperando sesión de YouTube, Spotify o AIMP"
         }
@@ -241,6 +261,11 @@ class EqService : Service() {
 
     @Synchronized
     private fun refreshActiveSession() {
+        if (USE_GLOBAL_OUTPUT_SESSION) {
+            ensureGlobalOutputEffect()
+            updateNotification()
+            return
+        }
         val audioManager = getSystemService(AudioManager::class.java)
         val discovered = mutableMapOf<Int, String>()
 
@@ -281,6 +306,29 @@ class EqService : Service() {
         staleSessions.forEach { detachSession(it) }
         desired.forEach { (sessionId, packageName) -> attachSessionSafely(sessionId, packageName) }
         updateNotification()
+    }
+
+    /**
+     * Route B: request DynamicsProcessing on session 0 (global output mix).
+     * Android/OEM audio policy may reject this for ordinary apps. In that case the
+     * failure is logged explicitly; we do not pretend the EQ is active.
+     */
+    @Synchronized
+    private fun ensureGlobalOutputEffect() {
+        if (!USE_GLOBAL_OUTPUT_SESSION || serviceDestroyed) return
+        val existing = dynamicsManagers[0]
+        if (existing != null) {
+            existing.applyState(currentState)
+            return
+        }
+        val manager = DynamicsProcessingManager()
+        if (manager.attachToSession(0, currentState)) {
+            dynamicsManagers[0] = manager
+            Log.i(TAG, "GLOBAL_OUTPUT_DSP_ATTACHED session=0 enabled=${currentState.isEnabled}")
+        } else {
+            manager.release()
+            Log.e(TAG, "GLOBAL_OUTPUT_DSP_FAILED session=0; Android audio policy rejected or does not support global DynamicsProcessing")
+        }
     }
 
     private fun isTargetPackage(packageName: String): Boolean = packageName in TARGET_PACKAGES
