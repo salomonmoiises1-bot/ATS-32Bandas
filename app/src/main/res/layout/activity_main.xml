@@ -271,7 +271,7 @@
                     <androidx.recyclerview.widget.RecyclerView
                         android:id="@+id/rvEqSliders"
                         android:layout_width="match_parent"
-                        android:layout_height="280dp"
+                        android:layout_height="340dp"
                         android:layout_marginTop="6dp"
                         android:overScrollMode="never" />
                 </LinearLayout>
