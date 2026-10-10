@@ -107,6 +107,7 @@ class MainActivity : AppCompatActivity() {
         setupTopToolbar()
         setupKnobs()
         setupPreampAndBoostFreq()
+        setupAdvanced()
         setupEqGraph()
         setupSlidersRecyclerView()
         setupMdrcSection()
@@ -173,6 +174,56 @@ class MainActivity : AppCompatActivity() {
     private fun setPreampUi(db: Float) {
         binding.sliderPreamp.value = snap(db, EqState32WithMDRC.PREAMP_MIN_DB, EqState32WithMDRC.PREAMP_MAX_DB, 0.5f)
         binding.tvPreampVal.text = "%+.1f dB".format(db)
+    }
+
+    private fun setLimThrUi(db: Float) {
+        binding.sliderLimThr.value = snap(db, EqState32WithMDRC.LIMITER_MIN_DB, EqState32WithMDRC.LIMITER_MAX_DB, 0.5f)
+        binding.tvLimThrVal.text = "%+.1f dB".format(db)
+    }
+
+    private fun setLimRelUi(ms: Float) {
+        binding.sliderLimRel.value = snap(ms, EqState32WithMDRC.LIMITER_RELEASE_MIN_MS, EqState32WithMDRC.LIMITER_RELEASE_MAX_MS, 5f)
+        binding.tvLimRelVal.text = "%d ms".format(Math.round(ms))
+    }
+
+    private fun setupAdvanced() {
+        setLimThrUi(currentState.limiterThresholdDb)
+        setLimRelUi(currentState.limiterReleaseMs)
+        binding.sliderLimThr.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                currentState = currentState.copy(limiterThresholdDb = value)
+                binding.tvLimThrVal.text = "%+.1f dB".format(value)
+                scheduleStateDispatch()
+            }
+        }
+        binding.sliderLimRel.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                currentState = currentState.copy(limiterReleaseMs = value)
+                binding.tvLimRelVal.text = "%d ms".format(Math.round(value))
+                scheduleStateDispatch()
+            }
+        }
+        binding.switchAutoHeadroom.isChecked = currentState.autoHeadroom
+        binding.switchAutoHeadroom.setOnCheckedChangeListener { _, isChecked ->
+            if (currentState.autoHeadroom != isChecked) {
+                currentState = currentState.copy(autoHeadroom = isChecked)
+                scheduleStateDispatch()
+            }
+        }
+        binding.switchDynBass.isChecked = currentState.dynamicBass
+        binding.switchDynBass.setOnCheckedChangeListener { _, isChecked ->
+            if (currentState.dynamicBass != isChecked) {
+                currentState = currentState.copy(dynamicBass = isChecked)
+                scheduleStateDispatch()
+            }
+        }
+        binding.switchBassDetail.isChecked = currentState.bassDetail
+        binding.switchBassDetail.setOnCheckedChangeListener { _, isChecked ->
+            if (currentState.bassDetail != isChecked) {
+                currentState = currentState.copy(bassDetail = isChecked)
+                scheduleStateDispatch()
+            }
+        }
     }
 
     private fun setBoostFreqUi(hz: Float) {
@@ -271,14 +322,19 @@ class MainActivity : AppCompatActivity() {
         setPreampUi(state.preampDb)
         setBoostFreqUi(state.bassBoostHz)
         binding.switchSmooth.isChecked = state.smoothCurve
+        setLimThrUi(state.limiterThresholdDb)
+        setLimRelUi(state.limiterReleaseMs)
+        binding.switchAutoHeadroom.isChecked = state.autoHeadroom
+        binding.switchDynBass.isChecked = state.dynamicBass
+        binding.switchBassDetail.isChecked = state.bassDetail
         binding.eqGraphView.updateCurve(state)
         slidersAdapter.updateGains(state.fixedGains)
         binding.mdrcView.setState(state)
     }
 
     private fun resetAllToFlat() {
-        // FLAT resets the sound settings but keeps the chosen curve mode (smooth / classic).
-        currentState = EqState32WithMDRC(smoothCurve = currentState.smoothCurve)
+        // FLAT resets the sound settings but keeps the chosen curve mode and the detailed-bass (latency) setting.
+        currentState = EqState32WithMDRC(smoothCurve = currentState.smoothCurve, bassDetail = currentState.bassDetail)
         updateUiFromState(currentState)
         dispatchStateUpdate()
         Toast.makeText(this, "Todas las bandas restablecidas a plano (0 dB)", Toast.LENGTH_SHORT).show()
@@ -309,7 +365,8 @@ class MainActivity : AppCompatActivity() {
 
     /** Applies a complete sound preset (EQ, tone, bass boost, preamp, MDRC). Master power is untouched. */
     private fun applyFullPreset(
-        gains: FloatArray, tone: FloatArray, boostDb: Float, boostHz: Float, preampDb: Float, mdrc: MdrcPreset?
+        gains: FloatArray, tone: FloatArray, boostDb: Float, boostHz: Float, preampDb: Float, mdrc: MdrcPreset?,
+        limiterThr: Float = -0.5f, limiterRel: Float = 50f, dynamicBass: Boolean = false, autoHeadroom: Boolean = false
     ) {
         val base = EqState32WithMDRC()
         currentState = currentState.copy(
@@ -318,6 +375,10 @@ class MainActivity : AppCompatActivity() {
             bassBoostDb = boostDb,
             bassBoostHz = boostHz,
             preampDb = preampDb,
+            limiterThresholdDb = limiterThr,
+            limiterReleaseMs = limiterRel,
+            dynamicBass = dynamicBass,
+            autoHeadroom = autoHeadroom,
             mdrcEnabled = mdrc != null,
             mdrcThreshold = mdrc?.threshold ?: base.mdrcThreshold,
             mdrcRatio = mdrc?.ratio ?: base.mdrcRatio,
@@ -421,7 +482,7 @@ class MainActivity : AppCompatActivity() {
                 floatArrayOf(0.5f, 0f, 1f), 0f, 60f, 0f, null
             )
         },
-        "Parlante pequeño (protege graves)" to {
+        "Parlante chico (corta graves profundos)" to {
             // Cuts the deepest bass a small driver cannot reproduce and lifts the 80-180 Hz range instead.
             applyFullPreset(
                 curve(20.0 to -9f, 30.0 to -7f, 40.0 to -5f, 55.0 to -2f, 80.0 to 2f, 120.0 to 3.5f,
@@ -432,6 +493,22 @@ class MainActivity : AppCompatActivity() {
                     floatArrayOf(5f, 20f, 15f, 10f), floatArrayOf(100f, 150f, 120f, 100f),
                     floatArrayOf(0f, 1f, 1f, 1f)
                 )
+            )
+        },
+        "Aiwa AWS-544BT (5 drivers, PR 45-50 Hz)" to {
+            // Subsonic cut below the passive-radiator tuning (~45-50 Hz) to avoid excursion, gentle lift 55-90 Hz,
+            // protective MDRC on the lowest band and a limiter 1 dB under full scale.
+            applyFullPreset(
+                curve(20.0 to -10f, 30.0 to -8f, 38.0 to -4f, 45.0 to -1f, 55.0 to 1.5f, 70.0 to 3f,
+                    90.0 to 2.5f, 130.0 to 1f, 200.0 to 0f, 1000.0 to 0f, 3000.0 to 0.5f,
+                    8000.0 to 1f, 14000.0 to 1.5f, 16000.0 to 1f),
+                floatArrayOf(0f, 0f, 0.5f), 2.5f, 60f, -3f,
+                MdrcPreset(
+                    floatArrayOf(-22f, -24f, -24f, -24f), floatArrayOf(4f, 2f, 2f, 2f),
+                    floatArrayOf(8f, 20f, 15f, 10f), floatArrayOf(120f, 150f, 120f, 100f),
+                    floatArrayOf(0f, 0f, 0f, 0f)
+                ),
+                limiterThr = -1.0f, limiterRel = 60f
             )
         }
     )
@@ -466,7 +543,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         // A preset holds the sound settings only; the master power switch stays as it is.
-        currentState = preset.copy(isEnabled = currentState.isEnabled)
+        currentState = preset.copy(isEnabled = currentState.isEnabled, bassDetail = currentState.bassDetail)
         updateUiFromState(currentState)
         dispatchStateUpdate()
         Toast.makeText(this, "Preset \"$name\" cargado", Toast.LENGTH_SHORT).show()
