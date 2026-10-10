@@ -19,6 +19,7 @@ class EqPreferencesManager(context: Context) {
         private const val KEY_MDRC_ATTACK = "mdrc_attack"
         private const val KEY_MDRC_RELEASE = "mdrc_release"
         private const val KEY_MDRC_MAKEUP = "mdrc_makeup"
+        private const val KEY_BASS_BOOST = "bass_boost_db"
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -34,6 +35,7 @@ class EqPreferencesManager(context: Context) {
             putString(KEY_MDRC_ATTACK, floatArrayToJson(state.mdrcAttack))
             putString(KEY_MDRC_RELEASE, floatArrayToJson(state.mdrcRelease))
             putString(KEY_MDRC_MAKEUP, floatArrayToJson(state.mdrcMakeup))
+            putFloat(KEY_BASS_BOOST, state.bassBoostDb)
             apply()
         }
     }
@@ -49,6 +51,8 @@ class EqPreferencesManager(context: Context) {
         val mdrcRelease = jsonToFloatArray(prefs.getString(KEY_MDRC_RELEASE, null), 4, 200.0f).mapValuesSafe(10f, 500f, 200f)
         val mdrcMakeup = jsonToFloatArray(prefs.getString(KEY_MDRC_MAKEUP, null), 4, 0.0f).mapValuesSafe(0f, 18f, 0f)
 
+        val bassBoost = prefs.getFloat(KEY_BASS_BOOST, 0f).let { if (it.isFinite()) it.coerceIn(0f, EqState32WithMDRC.BASS_BOOST_MAX_DB) else 0f }
+
         return EqState32WithMDRC(
             fixedGains = fixed,
             toneGains = tone,
@@ -58,7 +62,8 @@ class EqPreferencesManager(context: Context) {
             mdrcAttack = mdrcAttack,
             mdrcRelease = mdrcRelease,
             mdrcMakeup = mdrcMakeup,
-            isEnabled = isEnabled
+            isEnabled = isEnabled,
+            bassBoostDb = bassBoost
         )
     }
 
