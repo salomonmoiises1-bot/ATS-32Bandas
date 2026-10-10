@@ -10,6 +10,7 @@ import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import com.sjbstudio.eq32.core.Biquad
+import com.sjbstudio.eq32.core.SmoothCurve
 import com.sjbstudio.eq32.state.BiquadConfig
 import com.sjbstudio.eq32.state.EqState32WithMDRC
 import kotlin.math.log10
@@ -53,6 +54,7 @@ class EqGraphView @JvmOverloads constructor(
     private val fillPath = Path()
     private val biquadFilters = mutableListOf<Biquad>()
     private var currentState: EqState32WithMDRC? = null
+    private var smoothCurve: SmoothCurve? = null
 
     init {
         // Enable hardware acceleration for fluid curve rasterization
@@ -67,9 +69,10 @@ class EqGraphView @JvmOverloads constructor(
 
     private fun rebuildBiquadCascade(state: EqState32WithMDRC) {
         biquadFilters.clear()
+        smoothCurve = if (state.smoothCurve) SmoothCurve(state.fixedGains) else null
         if (!state.isEnabled) return
 
-        val biquadConfigs = state.toBiquads(48000)
+        val biquadConfigs = state.toBiquads(48000, includeBands = !state.smoothCurve)
         for (config in biquadConfigs) {
             val bq = Biquad()
             when (config) {
@@ -136,6 +139,7 @@ class EqGraphView @JvmOverloads constructor(
                 for (bq in biquadFilters) {
                     totalDb += bq.magnitudeAtDb(f, 48000.0)
                 }
+                smoothCurve?.let { totalDb += it.at(f) }
             }
 
             val y = dbToY(totalDb.toFloat().coerceIn(minDb, maxDb), h)
