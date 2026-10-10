@@ -189,6 +189,13 @@ class MainActivity : AppCompatActivity() {
                 scheduleStateDispatch()
             }
         }
+        binding.switchSmooth.isChecked = currentState.smoothCurve
+        binding.switchSmooth.setOnCheckedChangeListener { _, isChecked ->
+            if (currentState.smoothCurve != isChecked) {
+                currentState = currentState.copy(smoothCurve = isChecked)
+                scheduleStateDispatch()
+            }
+        }
         setBoostFreqUi(currentState.bassBoostHz)
         binding.sliderBoostFreq.addOnChangeListener { _, value, fromUser ->
             if (fromUser) {
@@ -263,16 +270,18 @@ class MainActivity : AppCompatActivity() {
         binding.knobBoost.setValue(state.bassBoostDb)
         setPreampUi(state.preampDb)
         setBoostFreqUi(state.bassBoostHz)
+        binding.switchSmooth.isChecked = state.smoothCurve
         binding.eqGraphView.updateCurve(state)
         slidersAdapter.updateGains(state.fixedGains)
         binding.mdrcView.setState(state)
     }
 
     private fun resetAllToFlat() {
-        currentState = EqState32WithMDRC()
+        // FLAT resets the sound settings but keeps the chosen curve mode (smooth / classic).
+        currentState = EqState32WithMDRC(smoothCurve = currentState.smoothCurve)
         updateUiFromState(currentState)
         dispatchStateUpdate()
-        Toast.makeText(this, "Reset all bands to flat reference (0 dB)", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Todas las bandas restablecidas a plano (0 dB)", Toast.LENGTH_SHORT).show()
     }
 
     private class MdrcPreset(
@@ -321,12 +330,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun builtInPresets(): List<Pair<String, () -> Unit>> = listOf(
-        "Pure Flat Reference" to { resetAllToFlat() },
-        "Harman Target Over-Ear" to { applyHarmanTarget() },
-        "Sub-Bass Thunder & Punch" to { applySubBass() },
-        "Crystal Vocal & Intelligibility" to { applyCrystalVocal() },
-        "V-Shape Energy" to { applyVShape() },
-        "Acoustic Warmth & Air" to { applyAcoustic() },
+        "Plano de referencia" to { resetAllToFlat() },
+        "Harman (auriculares over-ear)" to { applyHarmanTarget() },
+        "Sub-graves y pegada" to { applySubBass() },
+        "Voz cristalina y claridad" to { applyCrystalVocal() },
+        "Energía en V" to { applyVShape() },
+        "Calidez acústica y aire" to { applyAcoustic() },
 
         "Graves suaves" to {
             applyFullPreset(
