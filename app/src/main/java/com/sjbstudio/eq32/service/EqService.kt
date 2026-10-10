@@ -220,10 +220,10 @@ class EqService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "SJBStudio DSP Engine",
+                "Motor DSP SJBStudio",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Zero-Root 32-Band EQ & 4-Band MDRC Audio Processing"
+                description = "Ecualizador de 32 bandas y compresor MDRC de 4 bandas, sin root"
                 setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
@@ -248,13 +248,7 @@ class EqService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val statusText = when {
-            !currentState.isEnabled -> "DSP BYPASSED"
-            useGlobal && dynamicsManagers.containsKey(0) -> "DSP global conectado · salida del sistema"
-            useGlobal -> "Intentando conectar DSP global"
-            dynamicsManagers.isNotEmpty() -> "DSP activo · sesión de app objetivo conectada"
-            else -> "Esperando sesión de YouTube, Spotify o AIMP"
-        }
+        val statusText = currentStatusText()
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SJBStudio EQ32")
@@ -263,7 +257,7 @@ class EqService : Service() {
             .setContentIntent(pendingOpen)
             .addAction(
                 0,
-                if (currentState.isEnabled) "Bypass" else "Enable",
+                if (currentState.isEnabled) "Bypass" else "Activar",
                 pendingToggle
             )
             .setOngoing(true)
@@ -271,7 +265,21 @@ class EqService : Service() {
             .build()
     }
 
+    private fun currentStatusText(): String = when {
+        !currentState.isEnabled -> "DSP en bypass"
+        useGlobal && dynamicsManagers.containsKey(0) -> "DSP global conectado · salida del sistema"
+        useGlobal -> "Intentando conectar DSP global"
+        dynamicsManagers.isNotEmpty() -> "DSP activo · sesión de app objetivo conectada"
+        else -> "Esperando sesión de YouTube, Spotify o AIMP"
+    }
+
+    private var lastNotificationKey: String? = null
+
     private fun updateNotification() {
+        // Only re-post when what the user sees changed (the 5 s refresh used to re-post it every time).
+        val key = "${currentState.isEnabled}|${currentStatusText()}"
+        if (key == lastNotificationKey) return
+        lastNotificationKey = key
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildForegroundNotification())
     }

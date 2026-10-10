@@ -43,10 +43,10 @@ class SJBStudioTileService : TileService() {
         val current = prefsManager.loadCurrentState()
         if (current.isEnabled) {
             tile.state = Tile.STATE_ACTIVE
-            if (android.os.Build.VERSION.SDK_INT >= 29) tile.subtitle = "Active (32-Band)"
+            if (android.os.Build.VERSION.SDK_INT >= 29) tile.subtitle = "Activo (32 bandas)"
         } else {
             tile.state = Tile.STATE_INACTIVE
-            if (android.os.Build.VERSION.SDK_INT >= 29) tile.subtitle = "Bypassed"
+            if (android.os.Build.VERSION.SDK_INT >= 29) tile.subtitle = "En bypass"
         }
         tile.updateTile()
     }
