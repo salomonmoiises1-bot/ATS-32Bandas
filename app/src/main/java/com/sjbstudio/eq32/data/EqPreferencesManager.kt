@@ -40,14 +40,14 @@ class EqPreferencesManager(context: Context) {
 
     fun loadCurrentState(): EqState32WithMDRC {
         val isEnabled = prefs.getBoolean(KEY_ENABLED, true)
-        val fixed = jsonToFloatArray(prefs.getString(KEY_FIXED_GAINS, null), 32, 0.0f)
-        val tone = jsonToFloatArray(prefs.getString(KEY_TONE_GAINS, null), 3, 0.0f)
+        val fixed = jsonToFloatArray(prefs.getString(KEY_FIXED_GAINS, null), 32, 0.0f).mapValuesSafe(-12f, 12f, 0f)
+        val tone = jsonToFloatArray(prefs.getString(KEY_TONE_GAINS, null), 3, 0.0f).mapValuesSafe(-12f, 12f, 0f)
         val mdrcEnabled = prefs.getBoolean(KEY_MDRC_ENABLED, false)
-        val mdrcThreshold = jsonToFloatArray(prefs.getString(KEY_MDRC_THRESHOLD, null), 4, -20.0f)
-        val mdrcRatio = jsonToFloatArray(prefs.getString(KEY_MDRC_RATIO, null), 4, 2.0f)
-        val mdrcAttack = jsonToFloatArray(prefs.getString(KEY_MDRC_ATTACK, null), 4, 20.0f)
-        val mdrcRelease = jsonToFloatArray(prefs.getString(KEY_MDRC_RELEASE, null), 4, 200.0f)
-        val mdrcMakeup = jsonToFloatArray(prefs.getString(KEY_MDRC_MAKEUP, null), 4, 0.0f)
+        val mdrcThreshold = jsonToFloatArray(prefs.getString(KEY_MDRC_THRESHOLD, null), 4, -20.0f).mapValuesSafe(-40f, 0f, -20f)
+        val mdrcRatio = jsonToFloatArray(prefs.getString(KEY_MDRC_RATIO, null), 4, 2.0f).mapValuesSafe(1f, 20f, 2f)
+        val mdrcAttack = jsonToFloatArray(prefs.getString(KEY_MDRC_ATTACK, null), 4, 20.0f).mapValuesSafe(1f, 100f, 20f)
+        val mdrcRelease = jsonToFloatArray(prefs.getString(KEY_MDRC_RELEASE, null), 4, 200.0f).mapValuesSafe(10f, 500f, 200f)
+        val mdrcMakeup = jsonToFloatArray(prefs.getString(KEY_MDRC_MAKEUP, null), 4, 0.0f).mapValuesSafe(0f, 18f, 0f)
 
         return EqState32WithMDRC(
             fixedGains = fixed,
@@ -66,6 +66,11 @@ class EqPreferencesManager(context: Context) {
         val json = JSONArray()
         for (f in arr) json.put(f.toDouble())
         return json.toString()
+    }
+
+    private fun FloatArray.mapValuesSafe(min: Float, max: Float, fallback: Float): FloatArray = FloatArray(size) { index ->
+        val value = this[index]
+        if (value.isFinite()) value.coerceIn(min, max) else fallback.coerceIn(min, max)
     }
 
     private fun jsonToFloatArray(jsonStr: String?, expectedSize: Int, defaultVal: Float): FloatArray {
