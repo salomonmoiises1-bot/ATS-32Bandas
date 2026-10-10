@@ -40,6 +40,7 @@ class DynamicsProcessingManager {
     private var lastMdrcEnabled: Boolean? = null
     @Volatile private var latestState: EqState32WithMDRC = EqState32WithMDRC()
     @Volatile private var pendingEqWrite: Runnable? = null
+    @Volatile private var eqWriteRevision: Long = 0L
     @Volatile private var lastEqWriteMs: Long = 0L
     private val eqWorkerThread = HandlerThread("ATS-Eq32-DpWorker").apply { start() }
     private val eqWorker = Handler(eqWorkerThread.looper)
@@ -165,11 +166,19 @@ class DynamicsProcessingManager {
     }
 
     private fun scheduleEqWrite(state: EqState32WithMDRC) {
+        // Coalesce rapid slider updates without cancelling the queued DSP write.
+        // Cancelling/reposting on every touch frame can starve the EQ32 stage.
         latestState = state
-        pendingEqWrite?.let(eqWorker::removeCallbacks)
+        eqWriteRevision++
+        if (pendingEqWrite != null) return
         val job = Runnable {
+            val revisionAtStart = eqWriteRevision
             val latest = latestState
-            val dp = dynamicsProcessing ?: return@Runnable
+            val dp = dynamicsProcessing
+            if (dp == null) {
+                pendingEqWrite = null
+                return@Runnable
+            }
             try {
                 val sampleRate = currentSampleRate()
                 val eq = ParametricEqualizer(sampleRate)
@@ -223,6 +232,11 @@ class DynamicsProcessingManager {
                 Log.e(TAG, "EQ32 response conversion/write failed for session=$currentSessionId", e)
             } finally {
                 pendingEqWrite = null
+                // If the user changed a band while this write was running, queue
+                // one more pass using the newest state rather than losing it.
+                if (eqWriteRevision != revisionAtStart && dynamicsProcessing != null) {
+                    scheduleEqWrite(latestState)
+                }
             }
         }
         pendingEqWrite = job
