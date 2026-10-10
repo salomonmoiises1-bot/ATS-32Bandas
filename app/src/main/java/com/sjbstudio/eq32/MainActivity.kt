@@ -4,7 +4,12 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
@@ -33,9 +38,19 @@ class MainActivity : AppCompatActivity() {
     // Choreographer 16ms frame-rate limiter to debounce high-frequency touch updates
     private var isFrameScheduled = false
     private val mainHandler = Handler(Looper.getMainLooper())
+    // True only while a debounced save is outstanding, so onPause never overwrites
+    // a newer state written by the notification or the tile with a stale one.
+    private var persistPending = false
     private val persistStateRunnable = Runnable {
+        persistPending = false
         prefsManager.saveCurrentState(currentState)
     }
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            // Re-post the foreground notification now that it may be visible.
+            if (granted) EqService.startService(this)
+        }
     private val frameCallback = Choreographer.FrameCallback {
         isFrameScheduled = false
         dispatchRealtimeStateUpdate()
@@ -49,7 +64,12 @@ class MainActivity : AppCompatActivity() {
 
             // Sync with service state
             eqService?.getCurrentState()?.let { serviceState ->
-                currentState = serviceState
+                currentState = serviceState.deepCopy()
+                updateUiFromState(currentState)
+            }
+            // Follow changes made from the notification action or the quick-settings tile.
+            eqService?.stateListener = { external ->
+                currentState = external.deepCopy()
                 updateUiFromState(currentState)
             }
         }
@@ -67,6 +87,12 @@ class MainActivity : AppCompatActivity() {
 
         prefsManager = EqPreferencesManager(this)
         currentState = prefsManager.loadCurrentState()
+
+        // Android 13+: the foreground notification (and its Bypass action) needs this runtime permission.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
 
         // Start & bind DSP service
         EqService.startService(this)
@@ -112,6 +138,15 @@ class MainActivity : AppCompatActivity() {
         binding.knobMid.setValue(currentState.toneGains[1])
         binding.knobMid.onValueChangedListener = { gain ->
             currentState.toneGains[1] = gain
+            scheduleStateDispatch()
+        }
+
+        // Bass Boost Knob (60 Hz LowShelf, 0..12 dB) - same biquad path as the tone knobs
+        binding.knobBoost.minValue = 0f
+        binding.knobBoost.maxValue = EqState32WithMDRC.BASS_BOOST_MAX_DB
+        binding.knobBoost.setValue(currentState.bassBoostDb)
+        binding.knobBoost.onValueChangedListener = { gain ->
+            currentState = currentState.copy(bassBoostDb = gain)
             scheduleStateDispatch()
         }
 
@@ -167,12 +202,14 @@ class MainActivity : AppCompatActivity() {
     private fun dispatchRealtimeStateUpdate() {
         eqService?.updateState(currentState, persist = false)
         mainHandler.removeCallbacks(persistStateRunnable)
+        persistPending = true
         mainHandler.postDelayed(persistStateRunnable, 250L)
     }
 
     // Used for explicit actions (preset, reset) where an immediate save is desired.
     private fun dispatchStateUpdate() {
         mainHandler.removeCallbacks(persistStateRunnable)
+        persistPending = false
         prefsManager.saveCurrentState(currentState)
         eqService?.updateState(currentState, persist = false)
     }
@@ -182,6 +219,7 @@ class MainActivity : AppCompatActivity() {
         binding.knobBass.setValue(state.toneGains[0])
         binding.knobMid.setValue(state.toneGains[1])
         binding.knobTreble.setValue(state.toneGains[2])
+        binding.knobBoost.setValue(state.bassBoostDb)
         binding.eqGraphView.updateCurve(state)
         slidersAdapter.updateGains(state.fixedGains)
         binding.mdrcView.setState(state)
@@ -298,11 +336,26 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         // Flush the final drag value if the activity is backgrounded immediately.
         mainHandler.removeCallbacks(persistStateRunnable)
-        if (::prefsManager.isInitialized) prefsManager.saveCurrentState(currentState)
+        if (::prefsManager.isInitialized && persistPending) {
+            persistPending = false
+            prefsManager.saveCurrentState(currentState)
+        }
         super.onPause()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Pick up any change made while the app was in the background (notification / tile).
+        if (::prefsManager.isInitialized && eqService != null) {
+            eqService?.getCurrentState()?.let {
+                currentState = it.deepCopy()
+                updateUiFromState(currentState)
+            }
+        }
+    }
+
     override fun onDestroy() {
+        eqService?.stateListener = null
         mainHandler.removeCallbacks(persistStateRunnable)
         super.onDestroy()
         if (isBound) {
