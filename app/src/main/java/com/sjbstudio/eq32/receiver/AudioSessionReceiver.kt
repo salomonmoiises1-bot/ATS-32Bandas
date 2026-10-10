@@ -28,6 +28,7 @@ class AudioSessionReceiver : BroadcastReceiver() {
                 val serviceIntent = Intent(context, EqService::class.java).apply {
                     this.action = EqService.ACTION_ATTACH_SESSION
                     putExtra(EqService.EXTRA_AUDIO_SESSION, audioSessionId)
+                    putExtra(EqService.EXTRA_PACKAGE_NAME, packageName)
                 }
                 startServiceSafely(context, serviceIntent)
             }
@@ -35,6 +36,7 @@ class AudioSessionReceiver : BroadcastReceiver() {
                 val serviceIntent = Intent(context, EqService::class.java).apply {
                     this.action = EqService.ACTION_DETACH_SESSION
                     putExtra(EqService.EXTRA_AUDIO_SESSION, audioSessionId)
+                    putExtra(EqService.EXTRA_PACKAGE_NAME, packageName)
                 }
                 startServiceSafely(context, serviceIntent)
             }
