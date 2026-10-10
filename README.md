@@ -1,4 +1,4 @@
-# SJBStudio EQ32 - 32-Band Parametric/Graphic EQ & MDRC (Sin Root)
+# SJBStudio EQ32 - 32-Band Parametric/Graphic EQ & MDRC (Sin Root) Beta experiment
 
 High-fidelity 32-band audio equalizer with 3-band macro tone control and 4-band Multi-Band Dynamic Range Compression (MDRC), designed for Android API 28+ without requiring root privileges.
 
