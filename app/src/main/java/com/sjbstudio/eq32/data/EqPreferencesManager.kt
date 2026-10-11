@@ -28,6 +28,7 @@ class EqPreferencesManager(context: Context) {
         private const val KEY_LIM_REL = "limiter_release_ms"
         private const val KEY_AUTO_HEAD = "auto_headroom"
         private const val KEY_BASS_DETAIL = "bass_detail"
+        private const val KEY_HIGH_PRECISION = "high_precision"
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -52,6 +53,7 @@ class EqPreferencesManager(context: Context) {
             putFloat(KEY_LIM_REL, state.limiterReleaseMs)
             putBoolean(KEY_AUTO_HEAD, state.autoHeadroom)
             putBoolean(KEY_BASS_DETAIL, state.bassDetail)
+            putBoolean(KEY_HIGH_PRECISION, state.highPrecision)
             apply()
         }
     }
@@ -94,7 +96,8 @@ class EqPreferencesManager(context: Context) {
             limiterReleaseMs = prefs.getFloat(KEY_LIM_REL, 50f)
                 .let { if (it.isFinite()) it.coerceIn(EqState32WithMDRC.LIMITER_RELEASE_MIN_MS, EqState32WithMDRC.LIMITER_RELEASE_MAX_MS) else 50f },
             autoHeadroom = prefs.getBoolean(KEY_AUTO_HEAD, false),
-            bassDetail = prefs.getBoolean(KEY_BASS_DETAIL, false)
+            bassDetail = prefs.getBoolean(KEY_BASS_DETAIL, false),
+            highPrecision = prefs.getBoolean(KEY_HIGH_PRECISION, true)
         )
     }
 
