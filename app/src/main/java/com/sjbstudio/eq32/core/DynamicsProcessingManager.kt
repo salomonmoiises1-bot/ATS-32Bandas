@@ -508,6 +508,13 @@ class DynamicsProcessingManager {
 
     fun isEnabled(): Boolean = isEffectEnabled
 
+    /** False when the effect was released or the system took control of it away from us. */
+    fun isAlive(): Boolean = try {
+        dynamicsProcessing?.hasControl() == true
+    } catch (_: Exception) {
+        false
+    }
+
     @Synchronized
     fun release() {
         pendingEqWrite?.let(eqWorker::removeCallbacks)
