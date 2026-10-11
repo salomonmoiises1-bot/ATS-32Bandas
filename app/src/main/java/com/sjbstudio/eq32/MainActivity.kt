@@ -217,6 +217,13 @@ class MainActivity : AppCompatActivity() {
                 scheduleStateDispatch()
             }
         }
+        binding.switchHighPrecision.isChecked = currentState.highPrecision
+        binding.switchHighPrecision.setOnCheckedChangeListener { _, isChecked ->
+            if (currentState.highPrecision != isChecked) {
+                currentState = currentState.copy(highPrecision = isChecked)
+                scheduleStateDispatch()
+            }
+        }
         binding.switchBassDetail.isChecked = currentState.bassDetail
         binding.switchBassDetail.setOnCheckedChangeListener { _, isChecked ->
             if (currentState.bassDetail != isChecked) {
@@ -327,6 +334,7 @@ class MainActivity : AppCompatActivity() {
         binding.switchAutoHeadroom.isChecked = state.autoHeadroom
         binding.switchDynBass.isChecked = state.dynamicBass
         binding.switchBassDetail.isChecked = state.bassDetail
+        binding.switchHighPrecision.isChecked = state.highPrecision
         binding.eqGraphView.updateCurve(state)
         slidersAdapter.updateGains(state.fixedGains)
         binding.mdrcView.setState(state)
@@ -334,7 +342,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun resetAllToFlat() {
         // FLAT resets the sound settings but keeps the chosen curve mode and the detailed-bass (latency) setting.
-        currentState = EqState32WithMDRC(smoothCurve = currentState.smoothCurve, bassDetail = currentState.bassDetail)
+        currentState = EqState32WithMDRC(
+            smoothCurve = currentState.smoothCurve, bassDetail = currentState.bassDetail,
+            highPrecision = currentState.highPrecision
+        )
         updateUiFromState(currentState)
         dispatchStateUpdate()
         Toast.makeText(this, "Todas las bandas restablecidas a plano (0 dB)", Toast.LENGTH_SHORT).show()
@@ -543,7 +554,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         // A preset holds the sound settings only; the master power switch stays as it is.
-        currentState = preset.copy(isEnabled = currentState.isEnabled, bassDetail = currentState.bassDetail)
+        currentState = preset.copy(
+            isEnabled = currentState.isEnabled, bassDetail = currentState.bassDetail,
+            highPrecision = currentState.highPrecision
+        )
         updateUiFromState(currentState)
         dispatchStateUpdate()
         Toast.makeText(this, "Preset \"$name\" cargado", Toast.LENGTH_SHORT).show()
