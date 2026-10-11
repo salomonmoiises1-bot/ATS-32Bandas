@@ -17,6 +17,7 @@ import com.sjbstudio.eq32.MainActivity
 import com.sjbstudio.eq32.R
 import com.sjbstudio.eq32.core.DynamicsProcessingManager
 import com.sjbstudio.eq32.data.EqPreferencesManager
+import com.sjbstudio.eq32.data.PresetStore
 import com.sjbstudio.eq32.state.EqState32WithMDRC
 
 class EqService : Service() {
@@ -60,6 +61,15 @@ class EqService : Service() {
     }
 
     @Volatile private var useGlobal = TRY_GLOBAL_OUTPUT_SESSION
+    private lateinit var presetStore: PresetStore
+    private var outputMonitor: OutputMonitor? = null
+    private var lastOutputKind: OutputKind? = null
+    /** Where the sound is going right now (Bluetooth speaker, headphones, ...); null until detected. */
+    @Volatile var currentOutput: OutputInfo? = null
+        private set
+    /** Called on the main thread when the audio output changes. */
+    var outputListener: ((OutputInfo) -> Unit)? = null
+    private var globalRetryDelayMs = 5000L
     /** Called on the main thread when state changes from outside the UI (notification, tile). */
     var stateListener: ((EqState32WithMDRC) -> Unit)? = null
     private val binder = LocalBinder()
@@ -76,15 +86,22 @@ class EqService : Service() {
     private var playbackCallbackRegistered = false
     private val playbackCallback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
-            refreshActiveSession()
+            // Event-driven: bursts of callbacks collapse into one cheap check.
+            sessionHandler.removeCallbacks(eventRefresh)
+            sessionHandler.postDelayed(eventRefresh, 250L)
         }
     }
-    private val sessionRefresh = object : Runnable {
-        override fun run() {
-            if (!serviceDestroyed) {
-                refreshActiveSession()
-                sessionHandler.postDelayed(this, if (useGlobal) 5000L else 2000L)
-            }
+    private val eventRefresh = Runnable {
+        if (serviceDestroyed) return@Runnable
+        refreshActiveSession()
+        if (!useGlobal) kickSessionRecovery()
+        scheduleNextRefresh()
+    }
+    // Safety net only: global mode needs no polling while attached; otherwise it retries with back-off.
+    private val sessionRefresh = Runnable {
+        if (!serviceDestroyed) {
+            refreshActiveSession()
+            scheduleNextRefresh()
         }
     }
     private val sessionRecovery = object : Runnable {
@@ -106,7 +123,9 @@ class EqService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "Audio policy session recovery failed; retaining previously detected sessions", e)
             }
-            recoveryHandler?.postDelayed(this, 3000L)
+            // The dump is expensive: keep repeating it only while something is actually playing.
+            // New sessions are caught by the playback callback, which kicks a single dump.
+            if (isAnyPlaybackActive()) recoveryHandler?.postDelayed(this, 6000L)
         }
     }
     @Volatile private var serviceDestroyed = false
@@ -118,13 +137,13 @@ class EqService : Service() {
     override fun onCreate() {
         super.onCreate()
         prefsManager = EqPreferencesManager(this)
+        presetStore = PresetStore(this)
         currentState = prefsManager.loadCurrentState()
         createNotificationChannel()
         if (useGlobal) {
             ensureGlobalOutputEffect()
             if (dynamicsManagers.containsKey(0)) {
-                // Retry while the service remains alive in case audio policy was not ready yet.
-                sessionHandler.postDelayed(sessionRefresh, 5000L)
+                scheduleNextRefresh()
             } else {
                 // The system rejected the global output-mix effect: fall back to per-app sessions.
                 Log.w(TAG, "Global DSP rejected; falling back to per-app session mode")
@@ -134,9 +153,12 @@ class EqService : Service() {
         } else {
             startPerAppMode()
         }
+        registerPlaybackCallback()
+        outputMonitor = OutputMonitor(this, sessionHandler) { info -> handleOutputChange(info) }.also { it.start() }
     }
 
-    private fun startPerAppMode() {
+    private fun registerPlaybackCallback() {
+        if (playbackCallbackRegistered) return
         val audioManager = getSystemService(AudioManager::class.java)
         try {
             audioManager?.registerAudioPlaybackCallback(playbackCallback, sessionHandler)
@@ -144,11 +166,60 @@ class EqService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Playback callback registration unavailable", e)
         }
+    }
+
+    private fun scheduleNextRefresh() {
+        sessionHandler.removeCallbacks(sessionRefresh)
+        val delay = when {
+            useGlobal && dynamicsManagers.containsKey(0) -> return // attached: events only, no polling
+            useGlobal -> globalRetryDelayMs.also { globalRetryDelayMs = (it * 2).coerceAtMost(60_000L) }
+            else -> 10_000L
+        }
+        sessionHandler.postDelayed(sessionRefresh, delay)
+    }
+
+    private fun isAnyPlaybackActive(): Boolean = try {
+        getSystemService(AudioManager::class.java)?.activePlaybackConfigurations?.isNotEmpty() == true
+    } catch (_: Exception) {
+        true
+    }
+
+    private fun kickSessionRecovery() {
+        recoveryHandler?.removeCallbacks(sessionRecovery)
+        recoveryHandler?.postDelayed(sessionRecovery, 200L)
+    }
+
+    /** A different audio output became active: apply the profile saved for it, if there is one. */
+    private fun handleOutputChange(info: OutputInfo) {
+        if (serviceDestroyed) return
+        currentOutput = info
+        val kindChanged = lastOutputKind != info.kind
+        lastOutputKind = info.kind
+        if (kindChanged) {
+            val profile = presetStore.loadOutputProfile(info.kind.key)
+            if (profile != null) {
+                // A profile holds sound settings only; power and engine options stay as the user set them.
+                val merged = profile.copy(
+                    isEnabled = currentState.isEnabled,
+                    bassDetail = currentState.bassDetail,
+                    highPrecision = currentState.highPrecision
+                )
+                if (merged != currentState) {
+                    updateState(merged)
+                    stateListener?.invoke(currentState)
+                }
+            }
+        }
+        outputListener?.invoke(info)
+        updateNotification()
+    }
+
+    private fun startPerAppMode() {
         val thread = HandlerThread("ATSSessionRecovery").also { it.start() }
         recoveryThread = thread
         recoveryHandler = Handler(thread.looper)
         recoveryHandler?.post(sessionRecovery)
-        sessionHandler.post(sessionRefresh)
+        scheduleNextRefresh()
         refreshActiveSession()
     }
 
@@ -231,38 +302,64 @@ class EqService : Service() {
         }
     }
 
+    private fun servicePendingIntent(requestCode: Int, action: String): PendingIntent =
+        PendingIntent.getService(
+            this, requestCode, Intent(this, EqService::class.java).apply { this.action = action },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
     private fun buildForegroundNotification(): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingOpen = PendingIntent.getActivity(
-            this, 0, openAppIntent,
+            this, 2, openAppIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        val toggleIntent = Intent(this, EqService::class.java).apply {
-            action = ACTION_TOGGLE
-        }
-        val pendingToggle = PendingIntent.getService(
-            this, 1, toggleIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
+        val enabled = currentState.isEnabled
         val statusText = currentStatusText()
+        val output = currentOutput?.displayText()
+        val summary = summaryText()
+        val big = buildString {
+            append(statusText)
+            if (output != null) append("\nSalida: ").append(output)
+            if (summary.isNotEmpty()) append("\n").append(summary)
+        }
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("SJBStudio EQ32")
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(if (enabled) "SJBStudio EQ32 · Activo" else "SJBStudio EQ32 · Bypass")
             .setContentText(statusText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(big))
             .setSmallIcon(R.drawable.ic_tile_eq)
+            .setColor(0xFF06B6D4.toInt())
             .setContentIntent(pendingOpen)
-            .addAction(
-                0,
-                if (currentState.isEnabled) "Bypass" else "Activar",
-                pendingToggle
-            )
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setShowWhen(false)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+            .addAction(0, if (enabled) "Bypass" else "Activar", servicePendingIntent(1, ACTION_TOGGLE))
+            .addAction(0, "Abrir", pendingOpen)
+            .addAction(0, "Detener", servicePendingIntent(3, ACTION_STOP))
+        if (output != null) builder.setSubText(output)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        return builder.build()
+    }
+
+    /** One line with the settings that matter, shown when the notification is expanded. */
+    private fun summaryText(): String {
+        val s = currentState
+        val parts = ArrayList<String>()
+        if (s.preampDb != 0f) parts += "Preamp %+.1f dB".format(s.preampDb)
+        if (s.bassBoostDb > 0f) parts += "Refuerzo +%.1f dB a %d Hz".format(s.bassBoostDb, Math.round(s.bassBoostHz))
+        if (s.mdrcEnabled) parts += "MDRC"
+        if (s.dynamicBass) parts += "Graves dinámicos"
+        if (s.smoothCurve) parts += "Curva suave"
+        parts += "Límite %.1f dB".format(s.limiterThresholdDb)
+        return parts.joinToString(" · ")
     }
 
     private fun currentStatusText(): String = when {
@@ -276,8 +373,8 @@ class EqService : Service() {
     private var lastNotificationKey: String? = null
 
     private fun updateNotification() {
-        // Only re-post when what the user sees changed (the 5 s refresh used to re-post it every time).
-        val key = "${currentState.isEnabled}|${currentStatusText()}"
+        // Only re-post when what the user sees changed.
+        val key = "${currentState.isEnabled}|${currentStatusText()}|${currentOutput?.displayText()}|${summaryText()}"
         if (key == lastNotificationKey) return
         lastNotificationKey = key
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -343,11 +440,18 @@ class EqService : Service() {
         if (!useGlobal || serviceDestroyed) return
         val existing = dynamicsManagers[0]
         if (existing != null) {
-            existing.applyState(currentState)
-            return
+            if (existing.isAlive()) {
+                existing.applyState(currentState)
+                return
+            }
+            // The system dropped or took over the effect (e.g. audio server restart): rebuild it.
+            Log.w(TAG, "Global DSP lost; re-attaching")
+            dynamicsManagers.remove(0)
+            existing.release()
         }
         val manager = DynamicsProcessingManager()
         if (manager.attachToSession(0, currentState)) {
+            globalRetryDelayMs = 5000L
             dynamicsManagers[0] = manager
             Log.i(TAG, "GLOBAL_OUTPUT_DSP_ATTACHED session=0 enabled=${currentState.isEnabled}")
         } else {
@@ -401,7 +505,11 @@ class EqService : Service() {
     override fun onDestroy() {
         serviceDestroyed = true
         stateListener = null
+        outputListener = null
+        outputMonitor?.stop()
+        outputMonitor = null
         sessionHandler.removeCallbacks(sessionRefresh)
+        sessionHandler.removeCallbacks(eventRefresh)
         recoveryHandler?.removeCallbacks(sessionRecovery)
         recoveryThread?.quitSafely()
         recoveryHandler = null
