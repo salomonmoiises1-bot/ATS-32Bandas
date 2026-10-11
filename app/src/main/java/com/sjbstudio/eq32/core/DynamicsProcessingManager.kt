@@ -49,6 +49,11 @@ class DynamicsProcessingManager {
     private var lastMdrcEnabled: Boolean? = null
     private var lastPreampDb: Float? = null
     private var lastBassDetail: Boolean? = null
+    // What the user asked for (to detect changes) vs what the system accepted (Post-EQ may be rejected).
+    private var lastHighPrecision: Boolean? = null
+    @Volatile private var activeInterleave = false
+    @Volatile private var writtenPostCutoffs: FloatArray? = null
+    @Volatile private var writtenPostGains: FloatArray? = null
     private var lastLimiter: Pair<Float, Float>? = null
     private var lastAppliedState: EqState32WithMDRC? = null
     // Cache of what is currently written in the effect, so only changed EQ bands are sent.
@@ -89,8 +94,20 @@ class DynamicsProcessingManager {
         effectGeneration++
         currentSessionId = sessionId
         return try {
-            val config = buildDynamicsConfig(stableState)
-            val dp = DynamicsProcessing(0, sessionId, config)
+            var interleave = stableState.highPrecision
+            var created: DynamicsProcessing? = null
+            while (created == null) {
+                try {
+                    created = DynamicsProcessing(0, sessionId, buildDynamicsConfig(stableState, interleave))
+                } catch (e: Exception) {
+                    // Some systems reject the Post-EQ stage: retry once with the single staircase.
+                    if (!interleave) throw e
+                    Log.w(TAG, "Pre+Post EQ rejected; retrying with Pre-EQ only", e)
+                    interleave = false
+                }
+            }
+            val dp: DynamicsProcessing = created ?: throw IllegalStateException("DynamicsProcessing was not created")
+            activeInterleave = interleave
             dp.enabled = stableState.isEnabled
             applyPreamp(dp, stableState.preampDb)
             dynamicsProcessing = dp
@@ -98,6 +115,7 @@ class DynamicsProcessingManager {
             lastMdrcEnabled = mbcActive(stableState)
             lastMdrcSnapshot = mdrcSnapshot(stableState)
             lastBassDetail = stableState.bassDetail
+            lastHighPrecision = stableState.highPrecision
             lastLimiter = limiterOf(stableState)
             lastAppliedState = null
             ParametricToDpConverter.deviceSampleRateHz = currentSampleRate().toFloat()
@@ -125,12 +143,15 @@ class DynamicsProcessingManager {
         }
     }
 
-    private fun buildDynamicsConfig(state: EqState32WithMDRC): Config {
+    private fun buildDynamicsConfig(state: EqState32WithMDRC, interleave: Boolean): Config {
         val bandCount = EqState32WithMDRC.FREQS.size
         require(bandCount == REQUESTED_EQ_BANDS) { "EQ32 requires exactly 32 bands" }
         val preEq = Eq(true, true, bandCount)
+        // Post-EQ (second, offset staircase) starts flat on the same frequencies; the worker rewrites it.
+        val postEq = Eq(true, true, bandCount)
         safeBandFrequencies(currentSampleRate()).forEachIndexed { index, safeFrequency ->
             preEq.setBand(index, EqBand(state.isEnabled, safeFrequency, 0f))
+            postEq.setBand(index, EqBand(state.isEnabled, safeFrequency, 0f))
         }
 
         // The MBC stage is ALWAYS part of the effect (bands configured from the saved values) and only its
@@ -173,13 +194,14 @@ class DynamicsProcessingManager {
             2,
             true, bandCount,
             true, MDRC_BANDS,
-            false, 0,
+            interleave, if (interleave) bandCount else 0,
             true
         )
         builder.setPreferredFrameDuration(frameMs(state))
         val config = builder.build()
         for (channel in 0 until 2) {
             config.setPreEqByChannelIndex(channel, preEq)
+            if (interleave) config.setPostEqByChannelIndex(channel, postEq)
             config.setMbcByChannelIndex(channel, mbc)
             config.setLimiterByChannelIndex(channel, limiter)
         }
@@ -194,7 +216,8 @@ class DynamicsProcessingManager {
         // Periodic refreshes (e.g. every 5 s) with an unchanged state must not rewrite anything.
         if (stableState == lastAppliedState && !eqDirty) return
         // A different processing frame needs a new effect (rare, user-triggered; brief gap is expected).
-        if (lastBassDetail != null && lastBassDetail != stableState.bassDetail) {
+        if ((lastBassDetail != null && lastBassDetail != stableState.bassDetail) ||
+            (lastHighPrecision != null && lastHighPrecision != stableState.highPrecision)) {
             attachToSession(currentSessionId, stableState)
             return
         }
@@ -300,7 +323,10 @@ class DynamicsProcessingManager {
                 val smooth = if (latest.smoothCurve) {
                     SmoothCurve(FloatArray(EqState32WithMDRC.FREQS.size) { latest.fixedGains.getOrElse(it) { 0f }.coerceIn(-15f, 15f) })
                 } else null
-                val converted = ParametricToDpConverter.convertFeatureAware(eq, smooth?.let { c -> { f: Float -> c.at(f.toDouble()) } })
+                val useInterleave = activeInterleave
+                val converted = ParametricToDpConverter.convertFeatureAware(
+                    eq, smooth?.let { c -> { f: Float -> c.at(f.toDouble()) } }, useInterleave
+                )
                 if (converted.cutoffs.size != REQUESTED_EQ_BANDS || converted.gains.size != REQUESTED_EQ_BANDS) {
                     error("Converter must return exactly 32 bands")
                 }
@@ -309,9 +335,13 @@ class DynamicsProcessingManager {
                 val gains = FloatArray(REQUESTED_EQ_BANDS) {
                     if (latest.isEnabled) converted.gains[it].coerceIn(-15f, 15f) else 0f
                 }
+                val postCutoffs = converted.postCutoffs?.takeIf { useInterleave && it.size == REQUESTED_EQ_BANDS }
+                    ?.let { post -> FloatArray(REQUESTED_EQ_BANDS) { post[it].coerceIn(MIN_CUTOFF_HZ, MAX_CUTOFF_HZ) } }
+                val postGains = converted.postGains?.takeIf { postCutoffs != null && it.size == REQUESTED_EQ_BANDS }
+                    ?.let { post -> FloatArray(REQUESTED_EQ_BANDS) { if (latest.isEnabled) post[it].coerceIn(-15f, 15f) else 0f } }
                 if (latest.autoHeadroom) {
                     // Auto headroom: lower the input gain by the strongest boost actually applied.
-                    val peak = (gains.maxOrNull() ?: 0f).coerceAtLeast(0f)
+                    val peak = if (latest.isEnabled) converted.peakDb.coerceAtLeast(0f) else 0f
                     synchronized(this@DynamicsProcessingManager) {
                         if (generationAtStart == effectGeneration && dynamicsProcessing === dp) {
                             applyPreamp(dp, latest.preampDb - peak)
@@ -320,10 +350,16 @@ class DynamicsProcessingManager {
                 }
                 val prevCutoffs = writtenCutoffs
                 val prevGains = writtenGains
-                val sameLayout = cacheGeneration == generationAtStart && generationAtStart == effectGeneration &&
-                    prevCutoffs != null && prevGains != null && writtenEnabled == latest.isEnabled &&
-                    prevCutoffs.contentEquals(cutoffs)
+                val prevPostCutoffs = writtenPostCutoffs
+                val prevPostGains = writtenPostGains
+                val cacheValid = cacheGeneration == generationAtStart && generationAtStart == effectGeneration &&
+                    prevCutoffs != null && prevGains != null && writtenEnabled == latest.isEnabled
+                val sameLayout = cacheValid && prevCutoffs!!.contentEquals(cutoffs)
+                val samePostLayout = !useInterleave || (
+                    cacheValid && postCutoffs != null && prevPostCutoffs != null && prevPostGains != null &&
+                        prevPostCutoffs.contentEquals(postCutoffs))
                 try {
+                    // Pre-EQ staircase
                     if (sameLayout && prevGains != null) {
                         // Same band layout: send only the bands whose gain changed.
                         for (index in 0 until REQUESTED_EQ_BANDS) {
@@ -341,13 +377,34 @@ class DynamicsProcessingManager {
                             dp.setPreEqByChannelIndex(channel, stage)
                         }
                     }
+                    // Post-EQ staircase (offset half a stair) when the effect has that stage
+                    if (useInterleave && postCutoffs != null && postGains != null) {
+                        if (samePostLayout && prevPostGains != null) {
+                            for (index in 0 until REQUESTED_EQ_BANDS) {
+                                if (postGains[index] != prevPostGains[index]) {
+                                    val band = EqBand(latest.isEnabled, postCutoffs[index], postGains[index])
+                                    for (channel in 0 until channels) dp.setPostEqBandByChannelIndex(channel, index, band)
+                                }
+                            }
+                        } else {
+                            for (channel in 0 until channels) {
+                                val stage = Eq(true, true, REQUESTED_EQ_BANDS)
+                                for (index in 0 until REQUESTED_EQ_BANDS) {
+                                    stage.setBand(index, EqBand(latest.isEnabled, postCutoffs[index], postGains[index]))
+                                }
+                                dp.setPostEqByChannelIndex(channel, stage)
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
                     writtenCutoffs = null; writtenGains = null; writtenEnabled = null; cacheGeneration = -1
+                    writtenPostCutoffs = null; writtenPostGains = null
                     lastEqKey = null
                     throw e
                 }
                 if (generationAtStart == effectGeneration) {
                     writtenCutoffs = cutoffs; writtenGains = gains; writtenEnabled = latest.isEnabled
+                    writtenPostCutoffs = postCutoffs; writtenPostGains = postGains
                     cacheGeneration = generationAtStart
                 }
                 if (eqWriteRevision == revisionAtStart) eqDirty = false
@@ -471,6 +528,9 @@ class DynamicsProcessingManager {
             lastMdrcSnapshot = null
             lastPreampDb = null
             lastBassDetail = null
+            lastHighPrecision = null
+            activeInterleave = false
+            writtenPostCutoffs = null; writtenPostGains = null
             lastLimiter = null
             lastAppliedState = null
             writtenCutoffs = null; writtenGains = null; writtenEnabled = null; cacheGeneration = -1
