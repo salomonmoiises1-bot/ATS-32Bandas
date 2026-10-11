@@ -72,6 +72,8 @@ class MainActivity : AppCompatActivity() {
                 currentState = serviceState.deepCopy()
                 updateUiFromState(currentState)
             }
+            eqService?.outputListener = { info -> showOutput(info) }
+            showOutput(eqService?.currentOutput)
             // Follow changes made from the notification action or the quick-settings tile.
             eqService?.stateListener = { external ->
                 currentState = external.deepCopy()
@@ -108,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         setupKnobs()
         setupPreampAndBoostFreq()
         setupAdvanced()
+        setupOutputProfile()
         setupEqGraph()
         setupSlidersRecyclerView()
         setupMdrcSection()
@@ -230,6 +233,43 @@ class MainActivity : AppCompatActivity() {
                 currentState = currentState.copy(bassDetail = isChecked)
                 scheduleStateDispatch()
             }
+        }
+    }
+
+    private var shownOutput: com.sjbstudio.eq32.service.OutputInfo? = null
+
+    private fun showOutput(info: com.sjbstudio.eq32.service.OutputInfo?) {
+        shownOutput = info
+        if (info == null) {
+            binding.tvOutputName.text = "Salida no detectada todavía"
+            binding.tvOutputProfile.text = "Sin perfil para esta salida"
+            return
+        }
+        binding.tvOutputName.text = info.displayText()
+        binding.tvOutputProfile.text = if (presetStore.hasOutputProfile(info.kind.key))
+            "Perfil guardado: se aplica solo al conectar esta salida"
+        else "Sin perfil para esta salida (se mantienen tus ajustes)"
+    }
+
+    private fun setupOutputProfile() {
+        binding.btnSaveOutputProfile.setOnClickListener {
+            val info = shownOutput
+            if (info == null) {
+                Toast.makeText(this, "Todavía no se detectó la salida de audio", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (presetStore.saveOutputProfile(info.kind.key, currentState)) {
+                Toast.makeText(this, "Ajustes guardados para: ${info.kind.label}", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "No se pudo guardar (lista de presets llena)", Toast.LENGTH_SHORT).show()
+            }
+            showOutput(info)
+        }
+        binding.btnClearOutputProfile.setOnClickListener {
+            val info = shownOutput ?: return@setOnClickListener
+            presetStore.deleteOutputProfile(info.kind.key)
+            Toast.makeText(this, "Perfil quitado para: ${info.kind.label}", Toast.LENGTH_SHORT).show()
+            showOutput(info)
         }
     }
 
@@ -713,6 +753,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         // Pick up any change made while the app was in the background (notification / tile).
         if (::prefsManager.isInitialized && eqService != null) {
+            showOutput(eqService?.currentOutput ?: shownOutput)
             eqService?.getCurrentState()?.let {
                 currentState = it.deepCopy()
                 updateUiFromState(currentState)
@@ -722,6 +763,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         eqService?.stateListener = null
+        eqService?.outputListener = null
         mainHandler.removeCallbacks(persistStateRunnable)
         super.onDestroy()
         if (isBound) {
