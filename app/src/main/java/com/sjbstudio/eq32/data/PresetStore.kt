@@ -16,11 +16,13 @@ class PresetStore(context: Context) {
         private const val KEY_PRESETS = "presets"
         const val MAX_PRESETS = 100
         const val MAX_NAME_LENGTH = 40
+        // Per-output profiles live in the same list under a reserved prefix and are hidden from the preset list.
+        private const val OUTPUT_PREFIX = "@salida:"
     }
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun names(): List<String> = read().map { it.first }
+    fun names(): List<String> = read().map { it.first }.filterNot { it.startsWith(OUTPUT_PREFIX) }
 
     fun exists(name: String): Boolean = read().any { it.first.equals(name.trim(), ignoreCase = true) }
 
@@ -30,7 +32,23 @@ class PresetStore(context: Context) {
     /** Saves or overwrites (case-insensitive). Returns false when the name is invalid or the list is full. */
     fun save(rawName: String, state: EqState32WithMDRC): Boolean {
         val name = rawName.trim().take(MAX_NAME_LENGTH)
-        if (name.isEmpty()) return false
+        if (name.isEmpty() || name.startsWith(OUTPUT_PREFIX)) return false
+        return saveInternal(name, state)
+    }
+
+    /** Profile applied automatically when audio starts leaving through the output [kindKey]. */
+    fun saveOutputProfile(kindKey: String, state: EqState32WithMDRC): Boolean = saveInternal(OUTPUT_PREFIX + kindKey, state)
+
+    fun loadOutputProfile(kindKey: String): EqState32WithMDRC? =
+        read().firstOrNull { it.first == OUTPUT_PREFIX + kindKey }?.second?.let(::fromJson)
+
+    fun hasOutputProfile(kindKey: String): Boolean = read().any { it.first == OUTPUT_PREFIX + kindKey }
+
+    fun deleteOutputProfile(kindKey: String) {
+        write(read().filterNot { it.first == OUTPUT_PREFIX + kindKey })
+    }
+
+    private fun saveInternal(name: String, state: EqState32WithMDRC): Boolean {
         val list = read().toMutableList()
         val index = list.indexOfFirst { it.first.equals(name, ignoreCase = true) }
         val json = toJson(state)
