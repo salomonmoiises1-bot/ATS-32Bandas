@@ -24,7 +24,8 @@ data class EqState32WithMDRC(
     val limiterThresholdDb: Float = -0.5f, // output limiter threshold, -12 to 0 dB
     val limiterReleaseMs: Float = 50f, // output limiter release, 10 to 300 ms
     val autoHeadroom: Boolean = false, // lower the input gain automatically by the strongest boost
-    val bassDetail: Boolean = false // longer processing frame: finer bass resolution, more latency
+    val bassDetail: Boolean = false, // longer processing frame: finer bass resolution, more latency
+    val highPrecision: Boolean = true // Pre+Post EQ interleave: 64 effective stairs from the 32 bands
 ) {
     companion object {
         // Custom 32-point logarithmic layout spanning 20 Hz to 20,000 Hz (not the ISO 31-band 1/3-octave centre table).
@@ -96,6 +97,7 @@ data class EqState32WithMDRC(
         if (limiterReleaseMs != other.limiterReleaseMs) return false
         if (autoHeadroom != other.autoHeadroom) return false
         if (bassDetail != other.bassDetail) return false
+        if (highPrecision != other.highPrecision) return false
         return true
     }
 
@@ -118,6 +120,7 @@ data class EqState32WithMDRC(
         result = 31 * result + limiterReleaseMs.hashCode()
         result = 31 * result + autoHeadroom.hashCode()
         result = 31 * result + bassDetail.hashCode()
+        result = 31 * result + highPrecision.hashCode()
         return result
     }
 }
